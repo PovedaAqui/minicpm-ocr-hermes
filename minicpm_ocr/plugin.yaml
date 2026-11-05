@@ -1,5 +1,5 @@
 name: minicpm-ocr
-version: 0.4.0
+version: 0.5.0
 manifest_version: 2
 api_version: 1
 description: >-
@@ -27,6 +27,7 @@ config_schema:
     description: "MiniCPM-OCR service root, without /v1 (e.g. http://127.0.0.1:8000). Empty = auto-discover."
   api_key:
     type: secret
+    env: MODELBEST_API_KEY
     default: ""
     description: "ModelBest API key. Stored through Hermes' credential route, never in config.yaml."
   model:

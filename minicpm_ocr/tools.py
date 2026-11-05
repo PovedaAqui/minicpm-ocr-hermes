@@ -51,7 +51,29 @@ def ocr_read(args: dict, **kwargs: Any) -> str:
                     "endpoint and no layout stage. Convert the PDF to page images, or use the hosted API."
                 )
             job_id = client.submit_job(data, name=name)
+            if not bool(args.get("wait", True)):
+                return _ok(
+                    {
+                        "job_id": job_id,
+                        "status": "submitted",
+                        "source": {"name": name, "kind": kind, "bytes": len(data)},
+                        "backend": backend.name,
+                        "next": "Poll with ocr_job(job_id) — this PDF is still being parsed.",
+                    }
+                )
             status = client.wait(job_id, timeout=_job_timeout())
+            if not status.ok and not status.terminal:
+                # Slow is not broken: hand back the handle instead of failing the call.
+                return _ok(
+                    {
+                        "job_id": job_id,
+                        "status": status.status,
+                        "pages_done": status.pages_done,
+                        "pages_total": status.pages_total,
+                        "backend": backend.name,
+                        "next": "Still running: poll with ocr_job(job_id, action=status).",
+                    }
+                )
             if not status.ok:
                 raise ParseFailed(
                     f"parse job {job_id} ended in state {status.status!r} "
@@ -269,26 +291,25 @@ def _advice(passed: bool, score: float, threshold: float) -> str:
 def _settings() -> dict[str, Any]:
     if _CTX is None:
         return {}
-    for call in (lambda: _CTX.get_config(), lambda: _CTX.get_config("")):
-        try:
-            value = call()
-        except Exception:  # noqa: BLE001
-            continue
-        if isinstance(value, Mapping):
-            return dict(value)
-    return {}
+    try:
+        value = _CTX.get_config()
+    except Exception:  # noqa: BLE001
+        return {}
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 def _api_key(settings: Mapping[str, Any]) -> str:
+    """Read the key the way Hermes expects: secret route first, never .env by hand."""
     try:
         from agent.secret_scope import get_secret
 
         value = get_secret(_API_KEY_NAME)
         if value:
             return str(value).strip()
-    except Exception:  # noqa: BLE001 — not running inside Hermes, or no secret route
+    except Exception:  # noqa: BLE001 — outside Hermes, or no secret route in this build
         pass
-    return str(settings.get("api_key") or os.environ.get(_API_KEY_NAME) or "").strip()
+    # Standalone/dev only: Hermes never returns a secret through get_config().
+    return str(settings.get("api_key") or "").strip()
 
 
 def _client() -> tuple[OcrClient, Backend]:
@@ -310,9 +331,9 @@ def _client() -> tuple[OcrClient, Backend]:
 
 def _job_timeout() -> float:
     try:
-        return float(os.environ.get("HERMES_MINICPM_OCR_JOB_TIMEOUT") or 600)
+        return float(os.environ.get("HERMES_MINICPM_OCR_JOB_TIMEOUT") or 120)
     except ValueError:
-        return 600.0
+        return 120.0
 
 
 # --------------------------------------------------------------------------- helpers

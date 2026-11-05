@@ -25,16 +25,23 @@ region → accept, or hand it to a human.
 
 ## Status
 
-`0.4.0` — four tools are wired (`ocr_read`, `ocr_job`, `ocr_queue`, `ocr_verify`), with both backend families
+`0.5.0` — four tools are wired (`ocr_read`, `ocr_job`, `ocr_queue`, `ocr_verify`), with both backend families
 supported: the hosted `document-parse` API and any OpenAI-compatible local server, llama.cpp included. `ocr_extract`
-lands next. 33 tests, ruff clean.
+lands next. 42 tests, ruff clean.
 
 ## Install
 
 ```bash
-hermes plugins install /path/to/minicpm-ocr-hermes --subdir minicpm_ocr
+# once listed in the Hermes plugin catalog
+hermes plugins install minicpm-ocr
+
+# or from a clone, before it is listed
+cp -r minicpm_ocr ~/.hermes/plugins/minicpm-ocr
 hermes plugins enable minicpm-ocr
 ```
+
+The plugin itself lives in `minicpm_ocr/`; `plugin.yaml` sits there, which is why the catalog entry uses
+`subdir: minicpm_ocr`.
 
 Requires Hermes `>=0.22.0` and Python `>=3.10`. No third-party Python dependencies.
 
@@ -53,9 +60,10 @@ plugin settings form. In code the plugin reads it with `agent.secret_scope.get_s
 
 ### `ocr_read(path, mode="summary"|"markdown"|"blocks", max_chars=20000)`
 
-Parses one image (synchronously) or one PDF (as a job, polled to completion). Returns page count, region
-count, block labels, failed regions with their bboxes, and a Markdown preview. Context-safe by default:
-large output is truncated with a flag rather than flooding the turn.
+Parses one image (synchronously) or one PDF (as a job, polled for up to two minutes). Returns page count, region
+count, block labels, failed regions with their bboxes, and a Markdown preview. Context-safe by default: large
+output is truncated with a flag rather than flooding the turn. A PDF that outlives the wait returns its `job_id`
+and status instead of failing — poll it with `ocr_job`.
 
 ### `ocr_job(job_id, action="status"|"cancel")`
 
@@ -151,9 +159,11 @@ The test suite injects a fake transport, so nothing here needs a key or a networ
 - Sends the document you point it at to the configured backend. With the ModelBest backend that is a
   third-party API; with a local `base_url` nothing leaves the machine. The plugin does not upload anything
   you did not explicitly pass to a tool.
+- URLs are `https` only, and the host must resolve to a public address: loopback, private ranges and the
+  cloud metadata address are refused, on the first request and on every redirect.
 - No telemetry, no analytics, no self-updater.
-- API keys are read through Hermes' secret route; the plugin never reads `.env`, `auth.json` or another
-  tool's credential store.
+- API keys are read through Hermes' secret route (`get_secret`, declared as `env: MODELBEST_API_KEY`); the
+  plugin never reads `.env`, `auth.json` or another tool's credential store.
 - A failed call returns an error payload, never a silently empty result.
 
 ## Licence

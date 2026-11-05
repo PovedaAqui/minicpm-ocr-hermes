@@ -47,6 +47,15 @@ OCR_READ = {
                     "Leave it on unless you are parsing a throwaway document."
                 ),
             },
+            "wait": {
+                "type": "boolean",
+                "default": True,
+                "description": (
+                    "PDFs only: wait up to two minutes for the job. With false, returns a job_id "
+                    "immediately and you poll it with ocr_job. A job still running after the wait "
+                    "returns its handle either way."
+                ),
+            },
         },
         "required": ["path"],
         "additionalProperties": False,

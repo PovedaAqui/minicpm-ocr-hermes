@@ -1,6 +1,6 @@
 [project]
 name = "minicpm-ocr-hermes"
-version = "0.4.0"
+version = "0.5.0"
 description = "Hermes plugin: MiniCPM-OCR with per-region confidence and a human review queue."
 readme = "README.md"
 requires-python = ">=3.10"
