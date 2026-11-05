@@ -25,6 +25,12 @@ def register(ctx) -> None:
         handler=tools.ocr_job,
     )
     ctx.register_tool(
+        name="ocr_queue",
+        toolset="minicpm-ocr",
+        schema=schemas.OCR_QUEUE,
+        handler=tools.ocr_queue,
+    )
+    ctx.register_tool(
         name="ocr_verify",
         toolset="minicpm-ocr",
         schema=schemas.OCR_VERIFY,

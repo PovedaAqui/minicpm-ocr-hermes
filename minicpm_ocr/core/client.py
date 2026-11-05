@@ -63,6 +63,7 @@ class Block:
     content: str
     status: str
     bbox: tuple[int, int, int, int] | None = None
+    score: float | None = None
 
     @property
     def ok(self) -> bool:

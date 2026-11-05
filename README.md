@@ -25,8 +25,8 @@ region → accept, or hand it to a human.
 
 ## Status
 
-`0.1.0` — three tools are wired (`ocr_read`, `ocr_job`, `ocr_verify`). `ocr_extract` and `ocr_queue` land
-next. The core client, limits, discovery and error taxonomy are done and tested.
+`0.2.0` — four tools are wired (`ocr_read`, `ocr_job`, `ocr_queue`, `ocr_verify`). `ocr_extract` lands next.
+The core client, limits, discovery, error taxonomy and the review queue are done and tested.
 
 ## Install
 
@@ -64,6 +64,13 @@ Status of an asynchronous parse job: `pages_done` / `pages_total`, terminal stat
 
 Scores whether `text` actually matches the region at `path`. Use it before quoting a number, a date or a
 name, and when comparing two candidate readings of the same crop.
+
+### `ocr_queue(action="list"|"show"|"accept"|"reject"|"add"|"stats"|"export", …)`
+
+The human gate. Every region a parse reports as `failed`, plus anything the agent flags, is stored in SQLite
+under the plugin's data directory — not in the conversation, so it survives context compression, restarts and
+`hermes plugins update`. `accept` / `reject` record a note and a timestamp; `export` writes the whole queue
+as CSV for whoever does the reviewing.
 
 ## Backends
 

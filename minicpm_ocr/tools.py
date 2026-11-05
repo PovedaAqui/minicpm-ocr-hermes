@@ -16,6 +16,7 @@ from .core import limits
 from .core.client import DEFAULT_BASE_URL, JobStatus, OcrClient, Page
 from .core.errors import BackendUnavailable, OcrError, ParseFailed, RequestRejected
 from .core.probe import Backend, candidates, reachable
+from .core.queue import Queue
 from .core.sources import read_source
 
 _CTX: Any = None
@@ -63,6 +64,13 @@ def ocr_read(args: dict, **kwargs: Any) -> str:
         payload["source"] = {"name": name, "kind": kind, "bytes": len(data)}
         if job_id:
             payload["job_id"] = job_id
+        if bool(args.get("queue", True)):
+            try:
+                queued = Queue().add_failed_blocks(source=name, pages=pages, job_id=job_id)
+                if queued:
+                    payload["queued"] = queued
+            except Exception as exc:  # noqa: BLE001 — a full queue must not lose the read
+                payload["queue_error"] = f"{type(exc).__name__}: {exc}"
         return _ok(payload)
     except OcrError as exc:
         return _err(exc.to_dict())
@@ -109,6 +117,53 @@ def ocr_job(args: dict, **kwargs: Any) -> str:
         client, backend = _client()
         status = client.cancel_job(job_id) if action == "cancel" else client.job(job_id)
         return _ok(_job_payload(status, backend))
+    except OcrError as exc:
+        return _err(exc.to_dict())
+    except Exception as exc:  # noqa: BLE001
+        return _err({"code": "internal", "message": f"{type(exc).__name__}: {exc}", "retryable": False})
+
+
+def ocr_queue(args: dict, **kwargs: Any) -> str:
+    """List, inspect, decide or export the human review queue."""
+    try:
+        queue = Queue()
+        action = str(args.get("action") or "list").lower()
+        if action == "stats":
+            return _ok({"stats": queue.stats()})
+        if action == "list":
+            limit = int(args.get("limit") or 20)
+            return _ok({"items": queue.pending(limit), "stats": queue.stats()})
+        if action == "export":
+            path, rows = queue.export_csv()
+            return _ok({"path": path, "rows": rows})
+        if action == "add":
+            item_id = queue.add(
+                source=_require(args, "source"),
+                reason="agent_flagged",
+                content=str(args.get("content") or ""),
+                page=_opt_int(args.get("page")),
+                label=str(args.get("label") or ""),
+                score=_opt_float(args.get("score")),
+            )
+            return _ok({"item": queue.get(item_id), "stats": queue.stats()})
+        item_id = _opt_int(args.get("item_id"))
+        if item_id is None:
+            raise RequestRejected("item_id is required for show / accept / reject")
+        if action == "show":
+            item = queue.get(item_id)
+            if item is None:
+                raise RequestRejected(f"no queue item {item_id}")
+            return _ok({"item": item})
+        if action in ("accept", "reject"):
+            decided = queue.decide(
+                item_id,
+                "accepted" if action == "accept" else "rejected",
+                str(args.get("note") or ""),
+            )
+            if decided is None:
+                raise RequestRejected(f"no pending item {item_id}")
+            return _ok({"item": decided, "stats": queue.stats()})
+        raise RequestRejected("action must be list, show, accept, reject, add, stats or export")
     except OcrError as exc:
         return _err(exc.to_dict())
     except Exception as exc:  # noqa: BLE001
@@ -261,6 +316,24 @@ def _require(args: Mapping[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise RequestRejected(f"{key} is required")
     return value.strip()
+
+
+def _opt_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise RequestRejected(f"expected an integer, got {value!r}") from None
+
+
+def _opt_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise RequestRejected(f"expected a number, got {value!r}") from None
 
 
 def _excerpt(text: str, limit: int = 300) -> str:

@@ -1,5 +1,5 @@
 name: minicpm-ocr
-version: 0.1.0
+version: 0.2.0
 manifest_version: 2
 api_version: 1
 description: >-
@@ -14,6 +14,7 @@ requires_hermes: ">=0.22.0"
 provides_tools:
   - ocr_read
   - ocr_job
+  - ocr_queue
   - ocr_verify
 config_schema:
   base_url:

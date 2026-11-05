@@ -39,6 +39,14 @@ OCR_READ = {
                 "minimum": 500,
                 "description": "Cap on returned text; longer output is truncated with a notice.",
             },
+            "queue": {
+                "type": "boolean",
+                "default": True,
+                "description": (
+                    "Push every region with a non-ok status into the human review queue. "
+                    "Leave it on unless you are parsing a throwaway document."
+                ),
+            },
         },
         "required": ["path"],
         "additionalProperties": False,
@@ -67,6 +75,50 @@ OCR_JOB = {
             },
         },
         "required": ["job_id"],
+        "additionalProperties": False,
+    },
+}
+
+OCR_QUEUE = {
+    "name": "ocr_queue",
+    "description": (
+        "The human review queue: regions the parser could not read, or that scored below threshold. "
+        "Use it to list what is pending, show one item, accept or reject it with a note, add a region the "
+        "agent could not resolve, or export the whole queue as CSV. Anything you cannot verify should end "
+        "up here instead of in a confident answer."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["list", "show", "accept", "reject", "add", "stats", "export"],
+                "default": "list",
+                "description": "list: pending items. show: one item by id. accept/reject: decide one item.",
+            },
+            "item_id": {
+                "type": "integer",
+                "description": "Queue item id, for show / accept / reject.",
+            },
+            "limit": {
+                "type": "integer",
+                "default": 20,
+                "description": "Maximum items returned by list.",
+            },
+            "note": {
+                "type": "string",
+                "description": "Why it was accepted or rejected; stored with the decision.",
+            },
+            "source": {
+                "type": "string",
+                "description": "For add: the document the region came from.",
+            },
+            "page": {"type": "integer", "description": "For add: zero-based page index."},
+            "label": {"type": "string", "description": "For add: region label, e.g. text or table."},
+            "content": {"type": "string", "description": "For add: the text you are unsure about."},
+            "score": {"type": "number", "description": "For add: the Jev score you measured, if any."},
+        },
+        "required": [],
         "additionalProperties": False,
     },
 }
