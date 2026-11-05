@@ -1,0 +1,30 @@
+name: minicpm-ocr
+version: 0.1.0
+manifest_version: 2
+api_version: 1
+description: >-
+  Read documents with MiniCPM-OCR and know which regions to trust: per-region
+  confidence from MiniCPM-OCR Jev, automatic re-read of weak regions, and a
+  human review queue that survives the session.
+author: Luis Poveda
+license: MIT
+homepage: https://github.com/PovedaAqui/minicpm-ocr-hermes
+tags: [ocr, documents, pdf, minicpm, openbmb]
+requires_hermes: ">=0.22.0"
+provides_tools:
+  - ocr_read
+  - ocr_job
+  - ocr_verify
+config_schema:
+  base_url:
+    type: str
+    default: ""
+    description: "MiniCPM-OCR service root, without /v1 (e.g. http://127.0.0.1:8000). Empty = auto-discover."
+  api_key:
+    type: secret
+    default: ""
+    description: "ModelBest API key. Stored through Hermes' credential route, never in config.yaml."
+  threshold:
+    type: float
+    default: 0.6
+    description: "Jev score at or above which a region is accepted without review (0-1)."

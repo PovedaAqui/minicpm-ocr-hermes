@@ -1,0 +1,111 @@
+"""Model-facing tool schemas.
+
+Flat OpenAI-style function schemas, the shape ``ctx.register_tool`` expects.
+Descriptions are the whole game here: they are how the model decides when to
+reach for OCR instead of guessing.
+"""
+
+from __future__ import annotations
+
+OCR_READ = {
+    "name": "ocr_read",
+    "description": (
+        "Read a document image with MiniCPM-OCR and get back Markdown plus per-region status. "
+        "Use it whenever the answer depends on what a page or screenshot actually says — invoices, "
+        "receipts, contracts, forms, scanned letters, tables — instead of asking a vision model to "
+        "describe the file. Each region carries status ok/failed/skipped_no_vlm; anything not ok, "
+        "or any region whose text matters, should be checked with ocr_verify before you quote it. "
+        "One image per call; PDFs go through ocr_job."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Absolute path to the image, or a public https URL.",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["summary", "markdown", "blocks"],
+                "default": "summary",
+                "description": (
+                    "summary: counts, labels and failed regions only (cheap, use first). "
+                    "markdown: the page text in reading order. blocks: every region with its bbox."
+                ),
+            },
+            "max_chars": {
+                "type": "integer",
+                "default": 20000,
+                "minimum": 500,
+                "description": "Cap on returned text; longer output is truncated with a notice.",
+            },
+        },
+        "required": ["path"],
+        "additionalProperties": False,
+    },
+}
+
+OCR_JOB = {
+    "name": "ocr_job",
+    "description": (
+        "Check or cancel an asynchronous MiniCPM-OCR parse job (PDFs and long documents run as jobs). "
+        "Returns status, pages_done/pages_total and, once complete, how many pages came back. Use it when "
+        "ocr_read handed you a job_id instead of waiting, or to cancel a job that is no longer needed."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "job_id": {
+                "type": "string",
+                "description": "The job id returned when the document was submitted.",
+            },
+            "action": {
+                "type": "string",
+                "enum": ["status", "cancel"],
+                "default": "status",
+                "description": "status: poll for progress and results. cancel: stop the job.",
+            },
+        },
+        "required": ["job_id"],
+        "additionalProperties": False,
+    },
+}
+
+OCR_VERIFY = {
+    "name": "ocr_verify",
+    "description": (
+        "Score whether a piece of text really matches an image region, 0 to 1, with MiniCPM-OCR Jev. "
+        "Jev is model-agnostic: it grades text produced by any parser or by you. Use it before quoting a "
+        "number, date, name or total you read from a document, before telling the user a transcription is "
+        "correct, or to compare two candidate readings of the same region. A low score is a reason to "
+        "re-crop and re-read, not a reason to guess."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": (
+                    "Absolute path to the region image (a tight crop reads best), or an https URL."
+                ),
+            },
+            "text": {
+                "type": "string",
+                "description": "The candidate text to check against that region.",
+            },
+            "category": {
+                "type": "string",
+                "enum": ["text", "formula", "table"],
+                "default": "text",
+                "description": "Region type: plain text, a formula in LaTeX, or a table in HTML.",
+            },
+            "threshold": {
+                "type": "number",
+                "default": 0.6,
+                "description": "Score at or above which the text is accepted.",
+            },
+        },
+        "required": ["path", "text"],
+        "additionalProperties": False,
+    },
+}

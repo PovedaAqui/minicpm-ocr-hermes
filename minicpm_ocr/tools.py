@@ -1,0 +1,282 @@
+"""Tool handlers.
+
+Hermes contract: ``handler(args: dict, **kwargs) -> str``, always a JSON string,
+never an exception. Everything the model needs to decide what to do next is in
+the payload — including the reason a call failed.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from collections.abc import Mapping
+from typing import Any
+
+from .core import limits
+from .core.client import DEFAULT_BASE_URL, JobStatus, OcrClient, Page
+from .core.errors import BackendUnavailable, OcrError, ParseFailed, RequestRejected
+from .core.probe import Backend, candidates, reachable
+from .core.sources import read_source
+
+_CTX: Any = None
+_API_KEY_NAME = "MODELBEST_API_KEY"
+
+
+def set_context(ctx: Any) -> None:
+    global _CTX
+    _CTX = ctx
+
+
+# --------------------------------------------------------------------------- handlers
+
+
+def ocr_read(args: dict, **kwargs: Any) -> str:
+    """Parse an image or PDF and report what came back, region by region."""
+    try:
+        source = _require(args, "path")
+        mode = str(args.get("mode") or "summary").lower()
+        if mode not in ("summary", "markdown", "blocks"):
+            raise RequestRejected("mode must be summary, markdown or blocks")
+        max_chars = int(args.get("max_chars") or 20000)
+        data, name = read_source(source)
+        kind = limits.check_document(data, name)
+        client, backend = _client()
+
+        job_id = None
+        if kind == "pdf":
+            job_id = client.submit_job(data, name=name)
+            status = client.wait(job_id, timeout=_job_timeout())
+            if not status.ok:
+                raise ParseFailed(
+                    f"parse job {job_id} ended in state {status.status!r} "
+                    f"({status.pages_done}/{status.pages_total} pages)",
+                    detail=_excerpt(json.dumps(status.raw))[:400],
+                )
+            pages = list(status.pages)
+            markdown = status.markdown or "\n\n".join(p.markdown for p in pages)
+        else:
+            result = client.parse_image(data, name=name)
+            pages = list(result.pages)
+            markdown = "\n\n".join(p.markdown for p in pages)
+
+        payload = _shape(pages, markdown, mode=mode, max_chars=max_chars, backend=backend)
+        payload["source"] = {"name": name, "kind": kind, "bytes": len(data)}
+        if job_id:
+            payload["job_id"] = job_id
+        return _ok(payload)
+    except OcrError as exc:
+        return _err(exc.to_dict())
+    except Exception as exc:  # noqa: BLE001 — the contract forbids raising
+        return _err({"code": "internal", "message": f"{type(exc).__name__}: {exc}", "retryable": False})
+
+
+def ocr_verify(args: dict, **kwargs: Any) -> str:
+    """Score whether candidate text matches an image region, 0-1."""
+    try:
+        source = _require(args, "path")
+        text = str(args.get("text") or "")
+        if not text.strip():
+            raise RequestRejected("text is required: the candidate reading you want scored")
+        category = str(args.get("category") or "text").lower()
+        settings = _settings()
+        threshold = float(args.get("threshold") or settings.get("threshold") or 0.6)
+        data, name = read_source(source)
+        limits.check_image(data, name)
+        client, backend = _client()
+        result = client.jev_score(data, text, category=category, threshold=threshold)
+        return _ok(
+            {
+                "score": round(result.score, 4),
+                "passed": result.passed,
+                "threshold": result.threshold,
+                "category": result.category,
+                "verdict": result.verdict,
+                "backend": backend.name,
+                "advice": _advice(result.passed, result.score, result.threshold),
+            }
+        )
+    except OcrError as exc:
+        return _err(exc.to_dict())
+    except Exception as exc:  # noqa: BLE001
+        return _err({"code": "internal", "message": f"{type(exc).__name__}: {exc}", "retryable": False})
+
+
+def ocr_job(args: dict, **kwargs: Any) -> str:
+    """Status of an asynchronous parse job; cancel it with action=cancel."""
+    try:
+        job_id = _require(args, "job_id")
+        action = str(args.get("action") or "status").lower()
+        client, backend = _client()
+        status = client.cancel_job(job_id) if action == "cancel" else client.job(job_id)
+        return _ok(_job_payload(status, backend))
+    except OcrError as exc:
+        return _err(exc.to_dict())
+    except Exception as exc:  # noqa: BLE001
+        return _err({"code": "internal", "message": f"{type(exc).__name__}: {exc}", "retryable": False})
+
+
+# --------------------------------------------------------------------------- shaping
+
+
+def _shape(
+    pages: list[Page], markdown: str, *, mode: str, max_chars: int, backend: Backend
+) -> dict[str, Any]:
+    failed = [(p.index, b) for p in pages for b in p.failed]
+    labels: dict[str, int] = {}
+    for page in pages:
+        for block in page.blocks:
+            labels[block.label] = labels.get(block.label, 0) + 1
+    payload: dict[str, Any] = {
+        "backend": backend.name,
+        "blocks_available": backend.blocks,
+        "pages": len(pages),
+        "regions": sum(len(p.blocks) for p in pages),
+        "failed_regions": len(failed),
+        "block_labels": labels,
+        "page_indexes": [p.index for p in pages],
+    }
+    if failed:
+        payload["failed"] = [
+            {
+                "page": index,
+                "label": block.label,
+                "status": block.status,
+                "bbox": list(block.bbox) if block.bbox else None,
+                "preview": _excerpt(block.content, 120),
+            }
+            for index, block in failed[:20]
+        ]
+        payload["next"] = "Re-read these regions with a tighter crop, then check the text with ocr_verify."
+    if not backend.blocks:
+        payload["note"] = (
+            "This backend has no layout stage, so regions and bboxes are unavailable; "
+            "treat the page as one region and verify with ocr_verify."
+        )
+    if mode == "markdown":
+        payload["markdown"], payload["truncated"] = _clip(markdown, max_chars)
+    elif mode == "blocks":
+        payload["blocks"] = [
+            {
+                "page": page.index,
+                "order": block.order,
+                "label": block.label,
+                "status": block.status,
+                "bbox": list(block.bbox) if block.bbox else None,
+                "content": _excerpt(block.content, 400),
+            }
+            for page in pages
+            for block in page.blocks
+        ][:200]
+    else:
+        payload["preview"] = _excerpt(markdown, 600)
+    return payload
+
+
+def _job_payload(status: JobStatus, backend: Backend) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "job_id": status.id,
+        "status": status.status,
+        "done": status.terminal,
+        "completed": status.ok,
+        "pages_done": status.pages_done,
+        "pages_total": status.pages_total,
+        "fraction": round(status.fraction, 3) if status.fraction is not None else None,
+        "backend": backend.name,
+    }
+    if status.pages:
+        payload["pages"] = len(status.pages)
+    if status.markdown:
+        payload["markdown_chars"] = len(status.markdown)
+    return payload
+
+
+def _advice(passed: bool, score: float, threshold: float) -> str:
+    if passed:
+        return "Accepted: the text matches the region. Quote it if the surrounding context also checks out."
+    return (
+        f"Below threshold ({score:.2f} < {threshold:.2f}). Re-crop the region tighter and read it again, "
+        "or ask the user instead of quoting it."
+    )
+
+
+# --------------------------------------------------------------------------- config
+
+
+def _settings() -> dict[str, Any]:
+    if _CTX is None:
+        return {}
+    for call in (lambda: _CTX.get_config(), lambda: _CTX.get_config("")):
+        try:
+            value = call()
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(value, Mapping):
+            return dict(value)
+    return {}
+
+
+def _api_key(settings: Mapping[str, Any]) -> str:
+    try:
+        from agent.secret_scope import get_secret
+
+        value = get_secret(_API_KEY_NAME)
+        if value:
+            return str(value).strip()
+    except Exception:  # noqa: BLE001 — not running inside Hermes, or no secret route
+        pass
+    return str(settings.get("api_key") or os.environ.get(_API_KEY_NAME) or "").strip()
+
+
+def _client() -> tuple[OcrClient, Backend]:
+    settings = _settings()
+    key = _api_key(settings)
+    base = str(settings.get("base_url") or "").strip().rstrip("/")
+    if base:
+        backend = Backend(name="configured", base_url=base, api_key=key, source="settings")
+        return backend.client(), backend
+    if key:
+        backend = Backend(name="modelbest", base_url=DEFAULT_BASE_URL, api_key=key, source="api key")
+        return backend.client(), backend
+    for candidate in candidates(settings):
+        if candidate.kind == "openai" and reachable(candidate):
+            return candidate.client(), candidate
+    raise BackendUnavailable(
+        "No MiniCPM-OCR backend. Set a ModelBest API key in the plugin settings "
+        f"({_API_KEY_NAME}), or run vLLM/Ollama with MiniCPM-OCR on 127.0.0.1:8000 / :11434."
+    )
+
+
+def _job_timeout() -> float:
+    try:
+        return float(os.environ.get("HERMES_MINICPM_OCR_JOB_TIMEOUT") or 600)
+    except ValueError:
+        return 600.0
+
+
+# --------------------------------------------------------------------------- helpers
+
+
+def _require(args: Mapping[str, Any], key: str) -> str:
+    value = args.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise RequestRejected(f"{key} is required")
+    return value.strip()
+
+
+def _excerpt(text: str, limit: int = 300) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _clip(text: str, limit: int) -> tuple[str, bool]:
+    if len(text) <= limit:
+        return text, False
+    return text[: limit - 1] + "…", True
+
+
+def _ok(payload: Mapping[str, Any]) -> str:
+    return json.dumps({"ok": True, **payload}, ensure_ascii=False)
+
+
+def _err(error: Mapping[str, Any]) -> str:
+    return json.dumps({"ok": False, "error": dict(error)}, ensure_ascii=False)
