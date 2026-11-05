@@ -148,11 +148,16 @@ Vendor figures (benchmarks, throughput) belong to the model cards and are intent
 ## Development
 
 ```bash
-python -m pytest      # 19 tests, no network
+python -m pytest      # 42 tests, no network
 ruff check .
+hermes plugins validate minicpm_ocr   # the same check catalog admission runs
 ```
 
 The test suite injects a fake transport, so nothing here needs a key or a network.
+
+`hermes plugins validate` passes all fifteen checks against Hermes `main` — manifest, config schema, loadability,
+the isolated capability probe, declared-vs-registered tools/hooks/middleware, built-in name collisions, the
+security scan and the no-core-override check. CI runs it on every push, alongside pytest and ruff.
 
 ## Disclosure
 
