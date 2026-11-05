@@ -108,6 +108,9 @@ Run on 2026-11-05 against the ModelBest API, one laptop, one key:
 - `ocr_verify` on the same line with one digit changed (`1,284.50` → `1,248.50`): **0.0000**.
 - Jev cold start exceeded 90 s once; warm calls are **1.3 s**. The client retries and defaults to a 240 s
   timeout rather than pretending the first call is fast.
+- The local wire contract (`parse_page` over Chat Completions with `Text Recognition:`) was exercised against
+  the hosted service, which speaks the same protocol: **4.0 s**, page text returned, zero blocks. It has not yet
+  been run against a local vLLM/Ollama server — that is the next hardware-dependent check.
 
 Vendor figures (benchmarks, throughput) belong to the model cards and are intentionally not repeated here.
 
