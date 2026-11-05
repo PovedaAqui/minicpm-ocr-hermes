@@ -25,8 +25,9 @@ region → accept, or hand it to a human.
 
 ## Status
 
-`0.2.0` — four tools are wired (`ocr_read`, `ocr_job`, `ocr_queue`, `ocr_verify`). `ocr_extract` lands next.
-The core client, limits, discovery, error taxonomy and the review queue are done and tested.
+`0.3.0` — four tools are wired (`ocr_read`, `ocr_job`, `ocr_queue`, `ocr_verify`), with both backend families
+supported: the hosted `document-parse` API and any OpenAI-compatible local server. `ocr_extract` lands next.
+31 tests, ruff clean.
 
 ## Install
 
@@ -74,12 +75,28 @@ as CSV for whoever does the reviewing.
 
 ## Backends
 
-| Backend | Blocks + bboxes | Notes |
-|---|---|---|
-| ModelBest API (`api.modelbest.ai`) | yes | `POST /v1/document-parse`, jobs for PDFs, Jev via Chat Completions |
-| vLLM / SGLang / llama.cpp / Ollama | **no** | OpenAI-compatible; page-level text only, because the layout stage lives in OpenBMB's SDK, not in the model |
+| Backend | Blocks + bboxes | PDFs | Notes |
+|---|---|---|---|
+| ModelBest API (`api.modelbest.ai`) | yes | yes, as jobs | `POST /v1/document-parse` + `POST /v1/document-parse/jobs`; Jev via Chat Completions |
+| vLLM / SGLang / llama.cpp / Ollama | **no** | **no** | OpenAI-compatible Chat Completions with a `Text Recognition:` prompt; page-level text only |
 
-The tool payload always reports `blocks_available` so the model never assumes a bbox it does not have.
+The difference is architectural, not a missing feature: per-region blocks are produced by the **layout stage**
+in OpenBMB's SDK, which crops the page and sends each region to the model. A bare model server has no layout
+stage, so it answers one image with one block of text. The tool payload always reports `blocks_available`, and
+asks for a PDF on a local backend returns a clear error instead of a stack trace.
+
+Run it locally:
+
+```bash
+# any OpenAI-compatible server that serves the models, e.g.
+ollama pull minicpm-ocr
+hermes config set plugins.entries.minicpm-ocr.settings.backend local
+hermes config set plugins.entries.minicpm-ocr.settings.base_url http://127.0.0.1:11434
+hermes config set plugins.entries.minicpm-ocr.settings.model minicpm-ocr:latest
+```
+
+`backend: auto` (the default) prefers an explicit `base_url`, then the hosted API when a key is present, then a
+loopback server on :8000 or :11434.
 
 ## Measured, not claimed
 

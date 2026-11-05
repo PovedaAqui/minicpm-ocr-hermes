@@ -21,15 +21,27 @@ class Backend:
     name: str
     base_url: str
     api_key: str = ""
-    blocks: bool = True
+    kind: str = ""  # "modelbest" | "openai"; empty = infer from the host
     model: str = DEFAULT_MODEL
     jev_model: str = DEFAULT_JEV_MODEL
     source: str = ""
 
     @property
-    def kind(self) -> str:
+    def resolved_kind(self) -> str:
+        if self.kind:
+            return self.kind
         host = urlsplit(self.base_url).hostname or ""
         return "modelbest" if host.endswith("modelbest.ai") else "openai"
+
+    @property
+    def blocks(self) -> bool:
+        """Per-region bboxes exist only on the hosted document-parse API.
+
+        A local vLLM / SGLang / llama.cpp / Ollama server speaks Chat Completions
+        and returns page text; the layout stage that produces blocks lives in
+        OpenBMB's SDK, not in the model.
+        """
+        return self.resolved_kind == "modelbest"
 
     def client(self, **kwargs: Any) -> OcrClient:
         return OcrClient(
@@ -42,28 +54,52 @@ class Backend:
 
 
 def candidates(settings: Mapping[str, Any], *, env_key: str = "") -> list[Backend]:
-    """Ordered backends to try: explicit setting, then cloud key, then local servers."""
+    """Ordered backends to try, honouring an explicit mode: auto | cloud | local."""
     out: list[Backend] = []
     base = str(settings.get("base_url") or "").strip().rstrip("/")
     key = str(settings.get("_api_key") or env_key or "").strip()
+    mode = str(settings.get("backend") or "auto").strip().lower()
+    model = str(settings.get("model") or DEFAULT_MODEL)
+    jev_model = str(settings.get("jev_model") or DEFAULT_JEV_MODEL)
+
     if base:
-        out.append(Backend(name="configured", base_url=base, api_key=key, blocks=True, source="settings"))
-    if key:
+        out.append(
+            Backend(
+                name="configured",
+                base_url=base,
+                api_key=key,
+                model=model,
+                jev_model=jev_model,
+                source="settings",
+            )
+        )
+    if key and mode in ("auto", "cloud"):
         out.append(
             Backend(
                 name="modelbest",
                 base_url=DEFAULT_BASE_URL,
                 api_key=key,
-                blocks=True,
+                kind="modelbest",
+                model=model,
+                jev_model=jev_model,
                 source="api key",
             )
         )
-    for name, url in (
-        ("local-vllm", "http://127.0.0.1:8000"),
-        ("local-ollama", "http://127.0.0.1:11434"),
-    ):
-        # A local server has no layout stage, so it cannot produce per-region bboxes.
-        out.append(Backend(name=name, base_url=url, blocks=False, source="loopback"))
+    if mode in ("auto", "local"):
+        for name, url in (
+            ("local-vllm", "http://127.0.0.1:8000"),
+            ("local-ollama", "http://127.0.0.1:11434"),
+        ):
+            out.append(
+                Backend(
+                    name=name,
+                    base_url=url,
+                    kind="openai",
+                    model=model,
+                    jev_model=jev_model,
+                    source="loopback",
+                )
+            )
     return out
 
 
@@ -84,7 +120,7 @@ def probe(backend: Backend, *, timeout: float = 8.0) -> dict[str, Any]:
     report: dict[str, Any] = {
         "name": backend.name,
         "base_url": backend.base_url,
-        "kind": backend.kind,
+        "kind": backend.resolved_kind,
         "blocks": backend.blocks,
         "source": backend.source,
     }

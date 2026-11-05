@@ -238,6 +238,52 @@ class OcrClient:
             raw=body,
         )
 
+    def parse_page(
+        self,
+        data: bytes,
+        *,
+        name: str = "page",
+        prompt: str = "Text Recognition:",
+        model: str | None = None,
+        timeout: float | None = None,
+    ) -> ParseResult:
+        """Read a page through Chat Completions — the local vLLM / Ollama contract.
+
+        Page-level text only: without the SDK's layout stage there are no blocks
+        and no per-region status, which is why the tool payload reports
+        ``blocks_available: false`` for this backend.
+        """
+        limits.check_image(data, name)
+        data_uri = f"data:{limits.mime_for(data)};base64,{base64.b64encode(data).decode('ascii')}"
+        payload = {
+            "model": model or self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": data_uri}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            "temperature": 0,
+            "max_tokens": 4096,
+            "stream": False,
+        }
+        _, _, raw = self._request("POST", CHAT_PATH, payload=payload, timeout=timeout or self.timeout)
+        body = _json(raw)
+        choices = body.get("choices") or []
+        if not choices:
+            raise ParseFailed("the backend returned no choices", detail=str(body)[:400])
+        content = str((choices[0].get("message") or {}).get("content") or "")
+        page = Page(index=0, markdown=content.strip(), blocks=())
+        return ParseResult(
+            pages=(page,),
+            request_id=str(body.get("id") or "") or None,
+            result_status="ok",
+            raw=body,
+        )
+
     def submit_job(
         self,
         data: bytes,

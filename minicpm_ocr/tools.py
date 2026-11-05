@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .core import limits
-from .core.client import DEFAULT_BASE_URL, JobStatus, OcrClient, Page
+from .core.client import JobStatus, OcrClient, Page
 from .core.errors import BackendUnavailable, OcrError, ParseFailed, RequestRejected
 from .core.probe import Backend, candidates, reachable
 from .core.queue import Queue
@@ -45,6 +45,11 @@ def ocr_read(args: dict, **kwargs: Any) -> str:
 
         job_id = None
         if kind == "pdf":
+            if not backend.blocks:
+                raise RequestRejected(
+                    "this backend accepts images only: a local vLLM/Ollama server has no PDF job "
+                    "endpoint and no layout stage. Convert the PDF to page images, or use the hosted API."
+                )
             job_id = client.submit_job(data, name=name)
             status = client.wait(job_id, timeout=_job_timeout())
             if not status.ok:
@@ -55,8 +60,12 @@ def ocr_read(args: dict, **kwargs: Any) -> str:
                 )
             pages = list(status.pages)
             markdown = status.markdown or "\n\n".join(p.markdown for p in pages)
-        else:
+        elif backend.blocks:
             result = client.parse_image(data, name=name)
+            pages = list(result.pages)
+            markdown = "\n\n".join(p.markdown for p in pages)
+        else:
+            result = client.parse_page(data, name=name)
             pages = list(result.pages)
             markdown = "\n\n".join(p.markdown for p in pages)
 
@@ -285,19 +294,17 @@ def _api_key(settings: Mapping[str, Any]) -> str:
 def _client() -> tuple[OcrClient, Backend]:
     settings = _settings()
     key = _api_key(settings)
-    base = str(settings.get("base_url") or "").strip().rstrip("/")
-    if base:
-        backend = Backend(name="configured", base_url=base, api_key=key, source="settings")
-        return backend.client(), backend
     if key:
-        backend = Backend(name="modelbest", base_url=DEFAULT_BASE_URL, api_key=key, source="api key")
-        return backend.client(), backend
+        settings = {**settings, "_api_key": key}
     for candidate in candidates(settings):
-        if candidate.kind == "openai" and reachable(candidate):
-            return candidate.client(), candidate
+        if candidate.resolved_kind == "modelbest" and not candidate.api_key:
+            continue
+        if candidate.source == "loopback" and not reachable(candidate):
+            continue
+        return candidate.client(), candidate
     raise BackendUnavailable(
-        "No MiniCPM-OCR backend. Set a ModelBest API key in the plugin settings "
-        f"({_API_KEY_NAME}), or run vLLM/Ollama with MiniCPM-OCR on 127.0.0.1:8000 / :11434."
+        "No MiniCPM-OCR backend. Set a ModelBest API key, point base_url at a local vLLM/Ollama "
+        "server, or start one on 127.0.0.1:8000 / :11434."
     )
 
 

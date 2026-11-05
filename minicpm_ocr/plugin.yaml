@@ -1,5 +1,5 @@
 name: minicpm-ocr
-version: 0.2.0
+version: 0.3.0
 manifest_version: 2
 api_version: 1
 description: >-
@@ -17,6 +17,10 @@ provides_tools:
   - ocr_queue
   - ocr_verify
 config_schema:
+  backend:
+    type: str
+    default: auto
+    description: "auto | cloud | local. Which family of backends to consider."
   base_url:
     type: str
     default: ""
@@ -25,6 +29,14 @@ config_schema:
     type: secret
     default: ""
     description: "ModelBest API key. Stored through Hermes' credential route, never in config.yaml."
+  model:
+    type: str
+    default: "MiniCPM-OCR-1.0"
+    description: "Parser model id as the backend names it (e.g. minicpm-ocr:latest on Ollama)."
+  jev_model:
+    type: str
+    default: "MiniCPM-OCR-Jev"
+    description: "Jev model id as the backend names it."
   threshold:
     type: float
     default: 0.6
