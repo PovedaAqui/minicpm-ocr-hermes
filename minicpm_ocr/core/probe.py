@@ -15,6 +15,13 @@ from urllib.parse import urlsplit
 from .client import DEFAULT_BASE_URL, DEFAULT_JEV_MODEL, DEFAULT_MODEL, OcrClient
 from .errors import OcrError
 
+# Default ports: vLLM / SGLang, llama.cpp's llama-server, Ollama.
+LOCAL_SERVERS = (
+    ("local-vllm", "http://127.0.0.1:8000"),
+    ("local-llamacpp", "http://127.0.0.1:8080"),
+    ("local-ollama", "http://127.0.0.1:11434"),
+)
+
 
 @dataclass(frozen=True)
 class Backend:
@@ -24,6 +31,7 @@ class Backend:
     kind: str = ""  # "modelbest" | "openai"; empty = infer from the host
     model: str = DEFAULT_MODEL
     jev_model: str = DEFAULT_JEV_MODEL
+    jev_base_url: str = ""
     source: str = ""
 
     @property
@@ -49,6 +57,7 @@ class Backend:
             api_key=self.api_key,
             model=self.model,
             jev_model=self.jev_model,
+            jev_base_url=self.jev_base_url,
             **kwargs,
         )
 
@@ -61,6 +70,7 @@ def candidates(settings: Mapping[str, Any], *, env_key: str = "") -> list[Backen
     mode = str(settings.get("backend") or "auto").strip().lower()
     model = str(settings.get("model") or DEFAULT_MODEL)
     jev_model = str(settings.get("jev_model") or DEFAULT_JEV_MODEL)
+    jev_base = str(settings.get("jev_base_url") or "").strip().rstrip("/")
 
     if base:
         out.append(
@@ -70,6 +80,7 @@ def candidates(settings: Mapping[str, Any], *, env_key: str = "") -> list[Backen
                 api_key=key,
                 model=model,
                 jev_model=jev_model,
+                jev_base_url=jev_base,
                 source="settings",
             )
         )
@@ -82,14 +93,12 @@ def candidates(settings: Mapping[str, Any], *, env_key: str = "") -> list[Backen
                 kind="modelbest",
                 model=model,
                 jev_model=jev_model,
+                jev_base_url=jev_base,
                 source="api key",
             )
         )
     if mode in ("auto", "local"):
-        for name, url in (
-            ("local-vllm", "http://127.0.0.1:8000"),
-            ("local-ollama", "http://127.0.0.1:11434"),
-        ):
+        for name, url in LOCAL_SERVERS:
             out.append(
                 Backend(
                     name=name,
@@ -97,6 +106,7 @@ def candidates(settings: Mapping[str, Any], *, env_key: str = "") -> list[Backen
                     kind="openai",
                     model=model,
                     jev_model=jev_model,
+                    jev_base_url=jev_base,
                     source="loopback",
                 )
             )
@@ -122,6 +132,7 @@ def probe(backend: Backend, *, timeout: float = 8.0) -> dict[str, Any]:
         "base_url": backend.base_url,
         "kind": backend.resolved_kind,
         "blocks": backend.blocks,
+        "jev_base_url": backend.jev_base_url or backend.base_url,
         "source": backend.source,
     }
     if not reachable(backend):
@@ -141,6 +152,9 @@ def probe(backend: Backend, *, timeout: float = 8.0) -> dict[str, Any]:
 
 def doctor(settings: Mapping[str, Any], *, env_key: str = "", timeout: float = 8.0) -> dict[str, Any]:
     reports = [probe(b, timeout=timeout) for b in candidates(settings, env_key=env_key)]
+    jev_base = str(settings.get("jev_base_url") or "").strip().rstrip("/")
+    if jev_base and jev_base not in {r["base_url"] for r in reports}:
+        reports.append(probe(Backend(name="jev-only", base_url=jev_base, kind="openai"), timeout=timeout))
     usable = [r for r in reports if r.get("ok")]
     return {
         "ok": bool(usable),
@@ -148,5 +162,5 @@ def doctor(settings: Mapping[str, Any], *, env_key: str = "", timeout: float = 8
         "backends": reports,
         "hint": None
         if usable
-        else "Set a ModelBest API key, or run vLLM/Ollama with MiniCPM-OCR on 127.0.0.1:8000 / :11434.",
+        else "Set a ModelBest API key, or run llama-server / vLLM / Ollama with MiniCPM-OCR.",
     }

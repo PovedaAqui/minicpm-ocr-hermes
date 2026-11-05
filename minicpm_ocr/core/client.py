@@ -175,6 +175,7 @@ class OcrClient:
         api_key: str = "",
         model: str = DEFAULT_MODEL,
         jev_model: str = DEFAULT_JEV_MODEL,
+        jev_base_url: str = "",
         timeout: float = 300.0,
         max_attempts: int = 3,
         backoff: float = 1.5,
@@ -183,6 +184,9 @@ class OcrClient:
         user_agent: str = "hermes-minicpm-ocr/0.1",
     ) -> None:
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        # A single llama-server process serves a single model, so the parser and
+        # the judge usually need two ports. Empty means "same base as the parser".
+        self.jev_base_url = (jev_base_url or self.base_url).rstrip("/")
         self.api_key = api_key
         self.model = model
         self.jev_model = jev_model
@@ -370,7 +374,9 @@ class OcrClient:
             "minicpm_ocr_jev": {"mode": "score", "category": category, "threshold": threshold},
             "stream": False,
         }
-        _, _, raw = self._request("POST", CHAT_PATH, payload=payload, timeout=timeout or 240.0)
+        _, _, raw = self._request(
+            "POST", CHAT_PATH, payload=payload, timeout=timeout or 240.0, base=self.jev_base_url
+        )
         body = _json(raw)
         results = body.get("results") or []
         if not results:
@@ -401,8 +407,9 @@ class OcrClient:
         headers: Mapping[str, str] | None = None,
         expect: tuple[int, ...] = (200,),
         timeout: float | None = None,
+        base: str | None = None,
     ) -> Response:
-        url = self.base_url + path
+        url = (base or self.base_url) + path
         hdrs: dict[str, str] = {
             "Authorization": f"Bearer {self.api_key}" if self.api_key else "",
             "Accept": "application/json",

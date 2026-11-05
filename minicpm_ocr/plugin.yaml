@@ -1,5 +1,5 @@
 name: minicpm-ocr
-version: 0.3.0
+version: 0.4.0
 manifest_version: 2
 api_version: 1
 description: >-
@@ -37,6 +37,10 @@ config_schema:
     type: str
     default: "MiniCPM-OCR-Jev"
     description: "Jev model id as the backend names it."
+  jev_base_url:
+    type: str
+    default: ""
+    description: "Separate service root for Jev, without /v1. llama-server and Ollama serve one model per process, so parser and judge usually live on different ports."
   threshold:
     type: float
     default: 0.6

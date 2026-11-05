@@ -25,9 +25,9 @@ region → accept, or hand it to a human.
 
 ## Status
 
-`0.3.0` — four tools are wired (`ocr_read`, `ocr_job`, `ocr_queue`, `ocr_verify`), with both backend families
-supported: the hosted `document-parse` API and any OpenAI-compatible local server. `ocr_extract` lands next.
-31 tests, ruff clean.
+`0.4.0` — four tools are wired (`ocr_read`, `ocr_job`, `ocr_queue`, `ocr_verify`), with both backend families
+supported: the hosted `document-parse` API and any OpenAI-compatible local server, llama.cpp included. `ocr_extract`
+lands next. 33 tests, ruff clean.
 
 ## Install
 
@@ -78,17 +78,40 @@ as CSV for whoever does the reviewing.
 | Backend | Blocks + bboxes | PDFs | Notes |
 |---|---|---|---|
 | ModelBest API (`api.modelbest.ai`) | yes | yes, as jobs | `POST /v1/document-parse` + `POST /v1/document-parse/jobs`; Jev via Chat Completions |
-| vLLM / SGLang / llama.cpp / Ollama | **no** | **no** | OpenAI-compatible Chat Completions with a `Text Recognition:` prompt; page-level text only |
+| llama.cpp (`llama-server`) | **no** | **no** | OpenAI-compatible Chat Completions, port 8080 by default; needs `--mmproj`, one model per process |
+| vLLM / SGLang | **no** | **no** | Same contract, port 8000 by default |
+| Ollama | **no** | **no** | Same contract, port 11434; one model loaded per process too |
 
 The difference is architectural, not a missing feature: per-region blocks are produced by the **layout stage**
 in OpenBMB's SDK, which crops the page and sends each region to the model. A bare model server has no layout
 stage, so it answers one image with one block of text. The tool payload always reports `blocks_available`, and
-asks for a PDF on a local backend returns a clear error instead of a stack trace.
+asking for a PDF on a local backend returns a clear error instead of a stack trace.
 
-Run it locally:
+### llama.cpp
+
+`llama-server` serves one model per process, so the parser and the judge need two of them — that is what
+`jev_base_url` is for. Images only work if the server was started with a vision projector (`--mmproj`); without
+it the model accepts text and rejects the image.
 
 ```bash
-# any OpenAI-compatible server that serves the models, e.g.
+# names vary by quant — check the GGUF card for the exact files
+llama-server -m MiniCPM-OCR-1.0-Q4_K_M.gguf --mmproj mmproj-minicpm-ocr-f16.gguf \
+             -c 4096 --port 8080 --jinja
+llama-server -m MiniCPM-OCR-Jev-Q4_K_M.gguf --mmproj mmproj-minicpm-ocr-jev-f16.gguf \
+             -c 4096 --port 8081 --jinja
+
+hermes config set plugins.entries.minicpm-ocr.settings.backend local
+hermes config set plugins.entries.minicpm-ocr.settings.base_url http://127.0.0.1:8080
+hermes config set plugins.entries.minicpm-ocr.settings.jev_base_url http://127.0.0.1:8081
+hermes config set plugins.entries.minicpm-ocr.settings.model minicpm-ocr
+```
+
+A page consumes image tokens, so `-c 4096` is a floor rather than a luxury; `--image-max-tokens` is the knob that
+bounds cost per image.
+
+### Ollama
+
+```bash
 ollama pull minicpm-ocr
 hermes config set plugins.entries.minicpm-ocr.settings.backend local
 hermes config set plugins.entries.minicpm-ocr.settings.base_url http://127.0.0.1:11434
@@ -96,7 +119,7 @@ hermes config set plugins.entries.minicpm-ocr.settings.model minicpm-ocr:latest
 ```
 
 `backend: auto` (the default) prefers an explicit `base_url`, then the hosted API when a key is present, then a
-loopback server on :8000 or :11434.
+loopback server on :8000, :8080 or :11434.
 
 ## Measured, not claimed
 

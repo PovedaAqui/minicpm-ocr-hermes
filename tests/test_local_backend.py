@@ -42,7 +42,7 @@ def test_configured_local_backend_has_no_blocks():
 def test_mode_local_excludes_the_cloud_key():
     names = [b.name for b in candidates({"backend": "local", "_api_key": "k"})]
     assert "modelbest" not in names
-    assert names == ["local-vllm", "local-ollama"]
+    assert names == ["local-vllm", "local-llamacpp", "local-ollama"]
 
 
 def test_mode_cloud_excludes_loopback():
@@ -91,3 +91,42 @@ def test_ocr_read_refuses_pdf_on_local_backend(tmp_path, monkeypatch):
     assert result["ok"] is False
     assert result["error"]["code"] == "request_rejected"
     assert "images only" in result["error"]["message"]
+
+
+def test_jev_can_live_on_its_own_port():
+    """llama-server and Ollama serve one model per process: parser and judge split."""
+    calls = []
+
+    def transport(method, url, headers, body, timeout):
+        calls.append(url)
+        if ":8081" in url:
+            payload = {
+                "results": [{"prob_yes": 0.9, "prob_no": 0.1, "verdict": "scored", "category": "text"}],
+                "summary": {"threshold_used": 0.6},
+            }
+        else:
+            payload = CHAT
+        return 200, {}, json.dumps(payload).encode()
+
+    client = OcrClient(
+        base_url="http://127.0.0.1:8080",
+        jev_base_url="http://127.0.0.1:8081",
+        transport=transport,
+    )
+    client.jev_score(PNG, "Total due: 1,284.50")
+    client.parse_page(PNG)
+
+    assert calls[0] == "http://127.0.0.1:8081/v1/chat/completions"
+    assert calls[1] == "http://127.0.0.1:8080/v1/chat/completions"
+
+
+def test_candidates_pass_jev_base_url_through():
+    backends = candidates(
+        {
+            "backend": "local",
+            "base_url": "http://127.0.0.1:8080",
+            "jev_base_url": "http://127.0.0.1:8081",
+        }
+    )
+    assert backends[0].name == "configured"
+    assert backends[0].client().jev_base_url == "http://127.0.0.1:8081"
