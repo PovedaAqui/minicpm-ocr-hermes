@@ -171,6 +171,13 @@ security scan and the no-core-override check. CI runs it on every push, alongsid
   plugin never reads `.env`, `auth.json` or another tool's credential store.
 - A failed call returns an error payload, never a silently empty result.
 
+## Roadmap
+
+The short version: `ocr_extract` and the CLI next (8 Nov), the demo build and catalog PR (11 Nov), the MCP
+adapter and calibration table for Spark Open Build (5 Dec), `1.0` installable by name (13 Dec), and the
+MiniCPM5 OCR checkpoint absorbed as a model-id change when OpenBMB ships it. Full milestones, exit criteria and
+non-goals: [ROADMAP.md](ROADMAP.md).
+
 ## Licence
 
-MIT.
+MIT — see [LICENSE](LICENSE). SPDX: `MIT`.
