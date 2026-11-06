@@ -50,15 +50,14 @@ it found on a clean machine.
 
 **Exit:** the 90-second demo runs end to end twice, with the same numbers both times.
 
-### 0.9.0 — submission build · 11 Nov
+### 0.9.0 — public release · 11 Nov
 
 - Repo public, catalog entry (`subdir: minicpm_ocr`, full-SHA pin) and PR to `hermes-agent`.
 - 90-second demo video, README with measured numbers and the failure table.
-- Typeform filed the same evening.
 
-**Exit:** PR open, form submitted with both links, before 5PM EST.
+**Exit:** the PR is open, CI is green, and the demo reproduces the numbers the README prints.
 
-### 0.10.0 — Spark Open Build · 5 Dec
+### 0.10.0 — MCP adapter and calibration · 5 Dec
 
 - MCP adapter over the same core, so the parse/verify pair is usable from Claude, Cursor or any MCP client —
   the integration the upstream repo does not ship.
@@ -81,10 +80,10 @@ build.
 
 ### 1.x — MiniCPM5 OCR
 
-When OpenBMB ships the OCR checkpoint of the MiniCPM5 line (the S2 Phase-2 model is the likely slot), the plugin
-should absorb it **without a rewrite**: a new model id, a capability probe, and one adapter test. The tool
-surface already separates *what the model is* (`model`, `jev_model`) from *what the backend can do*
-(`blocks`, jobs, Jev). That separation is the whole reason the version is a config change rather than a project.
+When OpenBMB ships an OCR checkpoint for the MiniCPM5 line, the plugin should absorb it **without a rewrite**: a
+new model id, a capability probe, and one adapter test. The tool surface already separates *what the model is*
+(`model`, `jev_model`) from *what the backend can do* (`blocks`, jobs, Jev). That separation is the whole reason
+the version is a config change rather than a project.
 
 **Exit:** the MiniCPM5 OCR model runs through the same four tools, with a measured table next to the 1.0 numbers
 — and no change to the schemas the agent sees.

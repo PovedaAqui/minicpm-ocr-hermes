@@ -388,9 +388,8 @@ report, contact the maintainer through the repository instead of filing a public
 ## Roadmap
 
 The short version: `ocr_extract` and the CLI next, the demo build and catalog PR after that, the MCP adapter
-and calibration table for Spark Open Build, `1.0` installable by name, and the MiniCPM5 OCR checkpoint
-absorbed as a model-id change when OpenBMB ships it. Full milestones, exit criteria and non-goals:
-[ROADMAP.md](ROADMAP.md).
+and a published calibration table, `1.0` installable by name, and the MiniCPM5 OCR checkpoint absorbed as a
+model-id change when OpenBMB ships it. Full milestones, exit criteria and non-goals: [ROADMAP.md](ROADMAP.md).
 
 ## Licence
 
