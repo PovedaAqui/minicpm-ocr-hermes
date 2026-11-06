@@ -136,13 +136,34 @@ for a PDF on a chat backend returns a clear error instead of a stack trace.
 ### Local, full pipeline (blocks + PDFs)
 
 The official Docker image bundles the SDK, vLLM and the Web Demo backend. It is the shortest path when Docker
-and the NVIDIA Container Toolkit are available; follow the image README and expose port `8000`, then:
+and the NVIDIA Container Toolkit are available; expose port `8000`, then:
 
 ```bash
 hermes config set plugins.entries.minicpm-ocr.settings.backend local
 hermes config set plugins.entries.minicpm-ocr.settings.local_api document
 hermes config set plugins.entries.minicpm-ocr.settings.base_url http://127.0.0.1:8000
 ```
+
+The image's `vllm` shim fixes the context at 40960 and 36 images per prompt. That fits a 32 GB card, not a
+12 GB one: it OOMs during vision warmup. On 12 GB, bypass the shim inside the pipeline script with a
+16k-context, one-image profile:
+
+```bash
+/opt/venv/bin/python -m vllm.entrypoints.openai.api_server \
+  --model /opt/models/ocr --served-model-name minicpm-ocr-1.0 \
+  --trust-remote-code --host 0.0.0.0 --port 18499 \
+  --max-model-len 16384 --max-num-batched-tokens 4096 --max-num-seqs 1 \
+  --limit-mm-per-prompt '{"image":1,"video":0}' \
+  --mm-processor-kwargs '{"downsample_mode":"4x","max_slice_nums":9}' \
+  --gpu-memory-utilization 0.55 --attention-backend FLASH_ATTN \
+  --gdn-prefill-backend triton --trust-request-mm-kwargs --enforce-eager \
+  --uvicorn-log-level warning
+```
+
+Then start the bundled backend with `OCR_LAYOUT_DEVICE=cpu`, `OCR_UPRIGHT_DEVICE=cpu`,
+`PORT=8000 /opt/venv/bin/python -s server.py`. The plugin's default `upright: true` runs the CPU
+orientation/deskew stage; on a 12 GB host that is much slower than `upright: false` on an already-upright
+scan (see measurements).
 
 Without Docker, run the SDK Web Demo backend against any recognition server. This is the combination
 verified on an RTX 4070 (12 GB) with llama.cpp:
@@ -238,6 +259,10 @@ Run on 2026-11-06, one RTX 4070 12 GB, one i7-class CPU, Python 3.12:
 | llama.cpp + SDK document service | same invoice, first job (layout load) | **12.3 s** |
 | llama.cpp + SDK document service | 1-page PDF, 4 regions | **9.0 s** |
 | llama.cpp + SDK document service | 6-page PDF, 89 regions | **32.4 s** |
+| Docker image (12 GB profile) | invoice, `upright: false` | **29–43 s** |
+| Docker image (12 GB profile) | invoice, `upright: true` (CPU deskew) | **116 s** |
+| Docker image (12 GB profile) | 1-page PDF | **41 s** |
+| Docker OCR + local Jev | correct / reordered / Chinese | **0.9949 / 0.006 / 0.9427** |
 
 The local document service was exercised through `ocr_read` → `ocr_job` → `ocr_queue`, and the SDK CLI
 wrote the same page/block JSON shape (`status`, `pages_done`, `pages_total`, `pages[]`, `markdown`) that the
