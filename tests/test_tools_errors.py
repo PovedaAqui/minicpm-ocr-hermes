@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import types
 
@@ -389,3 +390,93 @@ def test_verify_rejects_unreachable_jev_fast(tmp_path, monkeypatch):
     assert result["ok"] is False
     assert result["error"]["code"] == "backend_unavailable"
     assert "not listening" in result["error"]["message"]
+
+
+class UnscoredClient:
+    def jev_score(self, data, text, *, category, threshold):
+        from minicpm_ocr.core.client import JevResult
+
+        return JevResult(
+            score=-1.0,
+            prob_no=2.0,
+            verdict="forward_error",
+            passed=False,
+            category=category,
+            threshold=threshold,
+            detail="backend not ready",
+            scored=False,
+        )
+
+
+def test_ocr_verify_unscored_verdict(tmp_path, monkeypatch):
+    path = tmp_path / "crop.png"
+    path.write_bytes(PNG)
+    backend = Backend(name="modelbest", base_url="https://api.modelbest.ai", api="modelbest")
+    monkeypatch.setattr(tools, "_client", lambda: (UnscoredClient(), backend))
+    result = json.loads(tools.ocr_verify({"path": str(path), "text": "x"}))
+    assert result["ok"] is True
+    assert result["scored"] is False
+    assert result["passed"] is False
+    assert result["advice"].startswith("Jev did not produce")
+
+
+def test_ocr_job_cancel_action(monkeypatch):
+    from minicpm_ocr.core.client import JobStatus
+
+    class CancelClient:
+        def cancel_job(self, job_id):
+            return JobStatus(id=job_id, status="Cancelled")
+
+    backend = Backend(name="modelbest", base_url="https://api.modelbest.ai", api="modelbest")
+    monkeypatch.setattr(tools, "_client", lambda: (CancelClient(), backend))
+    result = json.loads(tools.ocr_job({"job_id": "j1", "action": "cancel"}))
+    assert result["ok"] is True
+    assert result["status"] == "Cancelled"
+    assert result["done"] is True
+    assert result["completed"] is False
+
+
+def test_ocr_queue_list_and_export_actions(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINICPM_OCR_DB", str(tmp_path / "queue.sqlite3"))
+    added = json.loads(tools.ocr_queue({"action": "add", "source": "a.pdf", "content": "x"}))
+    assert added["ok"] is True
+    listed = json.loads(tools.ocr_queue({"action": "list", "limit": 5}))
+    assert len(listed["items"]) == 1
+    exported = json.loads(tools.ocr_queue({"action": "export"}))
+    assert exported["ok"] is True
+    assert exported["rows"] == 1
+    assert os.path.exists(exported["path"])
+
+
+def test_blocks_mode_caps_at_200():
+    blocks = tuple(Block(i, "text", f"line {i}", "ok", (i, i, i + 1, i + 1)) for i in range(250))
+    page = Page(index=0, markdown="", blocks=blocks)
+    backend = Backend(name="doc", base_url="http://127.0.0.1:8966", api="document")
+    payload = tools._shape([page], "", mode="blocks", max_chars=100, backend=backend)
+    assert len(payload["blocks"]) == 200
+
+
+def test_ocr_verify_accepts_zero_threshold(tmp_path, monkeypatch):
+    path = tmp_path / "crop.png"
+    path.write_bytes(PNG)
+    backend = Backend(name="modelbest", base_url="https://api.modelbest.ai", api="modelbest")
+    monkeypatch.setattr(tools, "_client", lambda: (VerifyClient(), backend))
+    result = json.loads(tools.ocr_verify({"path": str(path), "text": "x", "threshold": 0.0}))
+    assert result["ok"] is True
+    assert result["threshold"] == 0.0
+    assert result["passed"] is True
+
+
+def test_ocr_verify_reads_zero_threshold_from_settings(tmp_path, monkeypatch):
+    path = tmp_path / "crop.png"
+    path.write_bytes(PNG)
+    backend = Backend(name="modelbest", base_url="https://api.modelbest.ai", api="modelbest")
+    monkeypatch.setattr(tools, "_client", lambda: (VerifyClient(), backend))
+    class Ctx:
+        def get_config(self, key, default=None):
+            return 0.0 if key == "threshold" else default
+
+    tools.set_context(Ctx())
+    result = json.loads(tools.ocr_verify({"path": str(path), "text": "x"}))
+    assert result["ok"] is True
+    assert result["threshold"] == 0.0

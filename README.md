@@ -28,7 +28,7 @@ region → accept, or hand it to a human.
 `0.6.0` — four tools are wired (`ocr_read`, `ocr_job`, `ocr_queue`, `ocr_verify`) and three deployment
 surfaces are supported: the hosted ModelBest `document-parse` API, a local **document service** with the
 full layout pipeline (official Docker image or the SDK Web Demo backend), and a bare OpenAI-compatible
-chat server (llama.cpp, vLLM, SGLang, Ollama) for page-level text. 130 tests, ruff clean,
+chat server (llama.cpp, vLLM, SGLang, Ollama) for page-level text. 136 tests, ruff clean,
 `hermes plugins validate` 15/15.
 
 `ocr_extract` is the next tool; the review loop ships without it because extraction is optional and the
@@ -263,6 +263,10 @@ Run on 2026-11-06, one RTX 4070 12 GB, one i7-class CPU, Python 3.12:
 | Docker image (12 GB profile) | invoice, `upright: true` (CPU deskew) | **116 s** |
 | Docker image (12 GB profile) | 1-page PDF | **41 s** |
 | Docker OCR + local Jev | correct / reordered / Chinese | **0.9949 / 0.006 / 0.9427** |
+| Docker image, cold start to `/health` | **111 s** |
+| Docker image, 6-page PDF | **188 s**, job handle at the 180 s wait |
+| Docker image, 2 images concurrently | **55 s** warm |
+| Local Jev, 6 concurrent verifies | **1.0 s** total |
 
 The local document service was exercised through `ocr_read` → `ocr_job` → `ocr_queue`, and the SDK CLI
 wrote the same page/block JSON shape (`status`, `pages_done`, `pages_total`, `pages[]`, `markdown`) that the
@@ -274,7 +278,7 @@ Vendor figures (benchmarks, throughput) belong to the model cards and are intent
 ## Development
 
 ```bash
-python -m pytest      # 130 tests, no network, 97% line coverage
+python -m pytest      # 136 tests, no network, 98% line coverage
 ruff check .
 hermes plugins validate minicpm_ocr   # the same check catalog admission runs
 ```

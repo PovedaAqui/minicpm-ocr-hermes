@@ -119,7 +119,11 @@ def ocr_verify(args: dict, **kwargs: Any) -> str:
             raise RequestRejected("text is required: the candidate reading you want scored")
         category = str(args.get("category") or "text").lower()
         settings = _settings()
-        threshold = float(args.get("threshold") or settings.get("threshold") or 0.6)
+        threshold = _opt_float(args.get("threshold"))
+        if threshold is None:
+            threshold = _opt_float(settings.get("threshold"))
+        if threshold is None:
+            threshold = 0.6
         data, name = read_source(source)
         limits.check_image(data, name)
         client, backend = _client()
