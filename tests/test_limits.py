@@ -63,3 +63,68 @@ def test_check_document_routes_by_magic():
     assert limits.check_document(b"%PDF-1.7\n1 0 obj <</Type /Page>> endobj", "a.pdf") == "pdf"
     with pytest.raises(PayloadTooLarge):
         limits.check_document(b"just text", "notes.txt")
+
+
+def test_image_size_across_formats():
+    jpeg = (
+        b"\xff\xd8"
+        + b"\xff\xc0"
+        + (17).to_bytes(2, "big")
+        + b"\x08"
+        + (10).to_bytes(2, "big")
+        + (20).to_bytes(2, "big")
+        + b"\x03" + b"\x00" * 9
+    )
+    assert limits.image_size(jpeg) == (20, 10)
+
+    gif = b"GIF89a" + (30).to_bytes(2, "little") + (40).to_bytes(2, "little") + b"\x00" * 20
+    assert limits.image_size(gif) == (30, 40)
+
+    bmp = (
+        b"BM"
+        + b"\x00" * 16
+        + (50).to_bytes(4, "little", signed=True)
+        + (60).to_bytes(4, "little", signed=True)
+    )
+    assert limits.image_size(bmp) == (50, 60)
+
+    webp = b"RIFF" + b"\x00" * 4 + b"WEBP" + b"VP8X" + b"\x00" * 8
+    webp += (99).to_bytes(3, "little") + (101).to_bytes(3, "little") + b"\x00" * 2
+    assert limits.image_size(webp) == (100, 102)
+
+
+def test_image_size_returns_none_for_unknown_or_truncated():
+    assert limits.image_size(b"not-an-image") is None
+    assert limits.image_size(b"\x89PNG\r\n\x1a\n" + b"\x00") is None
+    assert limits.mime_for(b"not-an-image") == "application/octet-stream"
+
+
+def test_image_dimension_side_limit():
+    with pytest.raises(PayloadTooLarge):
+        limits.check_image(png(10, 9000), "tall.png")
+
+
+def test_pdf_size_limit(monkeypatch):
+    monkeypatch.setattr(limits, "MAX_ORIGINAL_BYTES", 10)
+    with pytest.raises(PayloadTooLarge):
+        limits.check_pdf(b"%PDF-1.4" + b"x" * 20, "big.pdf")
+
+
+def test_file_uri_roundtrip(tmp_path):
+    from minicpm_ocr.core import sources
+
+    path = tmp_path / "page.png"
+    path.write_bytes(png(4, 4))
+    data, name = sources.read_source(path.as_uri())
+    assert data.startswith(b"\x89PNG") and name == "page.png"
+
+
+def test_source_size_limit(monkeypatch, tmp_path):
+    from minicpm_ocr.core import sources
+    from minicpm_ocr.core.errors import RequestRejected
+
+    monkeypatch.setattr(sources, "MAX_ORIGINAL_BYTES", 4)
+    path = tmp_path / "page.png"
+    path.write_bytes(b"12345")
+    with pytest.raises(RequestRejected):
+        sources.read_source(str(path))

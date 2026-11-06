@@ -106,3 +106,65 @@ def test_skipped_regions_are_not_review_items(tmp_path):
     ids = queue.add_failed_blocks(source="doc.pdf", pages=[page])
     assert len(ids) == 1
     assert queue.get(ids[0])["label"] == "table"
+
+
+def test_db_path_explicit_and_env(tmp_path, monkeypatch):
+    from minicpm_ocr.core import queue as queue_mod
+
+    explicit = tmp_path / "explicit.sqlite3"
+    assert queue_mod.db_path(explicit) == explicit
+    monkeypatch.setenv("MINICPM_OCR_DB", str(tmp_path / "env.sqlite3"))
+    assert queue_mod.db_path() == tmp_path / "env.sqlite3"
+
+
+def test_add_records_bbox_and_job(tmp_path):
+    queue = Queue(tmp_path / "q.sqlite3")
+    item_id = queue.add(
+        source="doc.pdf",
+        reason="low_score",
+        content="x",
+        page=3,
+        label="formula",
+        bbox=[1, 2, 3, 4],
+        score=0.2,
+        job_id="j9",
+    )
+    item = queue.get(item_id)
+    assert item["bbox"] == [1, 2, 3, 4]
+    assert item["job_id"] == "j9"
+    assert item["score"] == 0.2
+    assert item["page"] == 3
+
+
+def test_get_missing_and_invalid_decision(tmp_path):
+    queue = Queue(tmp_path / "q.sqlite3")
+    assert queue.get(999) is None
+    item_id = queue.add(source="doc.pdf", reason="agent_flagged")
+    try:
+        queue.decide(item_id, "maybe")
+    except ValueError as exc:
+        assert "accepted or rejected" in str(exc)
+    else:
+        raise AssertionError("invalid decision was accepted")
+
+
+def test_min_score_queues_an_ok_block(tmp_path):
+    queue = Queue(tmp_path / "q.sqlite3")
+    page = Page(
+        index=0,
+        markdown="",
+        blocks=(Block(0, "text", "plausible", "ok", (1, 2, 3, 4), score=0.2),),
+    )
+    ids = queue.add_failed_blocks(source="doc.pdf", pages=[page], min_score=0.6)
+    assert len(ids) == 1
+    item = queue.get(ids[0])
+    assert item["reason"] == "low_score"
+    assert item["score"] == 0.2
+
+
+def test_export_empty_queue(tmp_path):
+    queue = Queue(tmp_path / "q.sqlite3")
+    path, rows = queue.export_csv(tmp_path / "exports")
+    assert rows == 0
+    text = open(path, encoding="utf-8").read()
+    assert text.startswith("id,created_at,source")

@@ -28,7 +28,7 @@ region → accept, or hand it to a human.
 `0.6.0` — four tools are wired (`ocr_read`, `ocr_job`, `ocr_queue`, `ocr_verify`) and three deployment
 surfaces are supported: the hosted ModelBest `document-parse` API, a local **document service** with the
 full layout pipeline (official Docker image or the SDK Web Demo backend), and a bare OpenAI-compatible
-chat server (llama.cpp, vLLM, SGLang, Ollama) for page-level text. 53 tests, ruff clean,
+chat server (llama.cpp, vLLM, SGLang, Ollama) for page-level text. 130 tests, ruff clean,
 `hermes plugins validate` 15/15.
 
 `ocr_extract` is the next tool; the review loop ships without it because extraction is optional and the
@@ -63,6 +63,12 @@ Requires Hermes `>=0.22.0` and Python `>=3.10`. No third-party Python dependenci
 | `jev_base_url` | Separate service root for Jev, without `/v1`. Empty = same as `base_url`. |
 | `jev_api` | `auto` \| `rm` \| `chat`. `rm` = local Jev render+score service (`/v1/rm/score`); `chat` = hosted Jev Chat Completions. `auto` picks `rm` for a loopback URL, `chat` otherwise. |
 | `threshold` | Jev score at or above which a region is accepted (default `0.6`). |
+
+Backends are tried in order: explicit `base_url`, the hosted key, then the default local ports. A
+loopback candidate that is not listening is skipped in about 0.5 s, so a dead local service returns
+`backend_unavailable` instead of stalling through HTTP retries; if another candidate is up, it is used.
+Set `backend` and `local_api` when you need one specific deployment. `ocr_verify` preflights a local
+`jev_base_url` the same way.
 
 Set the API key through the Desktop plugin form or by adding the variable to the profile's `.env`:
 
@@ -222,8 +228,8 @@ Run on 2026-11-06, one RTX 4070 12 GB, one i7-class CPU, Python 3.12:
 
 | Path | What | Result |
 |---|---|---|
-| ModelBest API | 653 KB invoice PNG, 15 regions | **24.5 s**, 0 failed regions, 1 skipped (`image`) |
-| ModelBest API | 1-page PDF, 4 regions | **12.8 s** |
+| ModelBest API | 653 KB invoice PNG, 15 regions | **6–25 s** (warm–cold), 0 failed, 1 skipped |
+| ModelBest API | 1-page PDF, 4 regions | **9–13 s** |
 | ModelBest Jev | Jev example crop, correct transcription | **0.9952**, **1.9 s** |
 | local Jev (Q4_K_M + render service) | same crop, correct transcription | **0.9948**, **1.0 s** (reference **0.99501**) |
 | local Jev (Q4_K_M + render service) | same crop, reordered OCR output | **0.0020**, **0.8 s** |
@@ -243,7 +249,7 @@ Vendor figures (benchmarks, throughput) belong to the model cards and are intent
 ## Development
 
 ```bash
-python -m pytest      # 53 tests, no network
+python -m pytest      # 130 tests, no network, 97% line coverage
 ruff check .
 hermes plugins validate minicpm_ocr   # the same check catalog admission runs
 ```

@@ -129,6 +129,13 @@ def ocr_verify(args: dict, **kwargs: Any) -> str:
                 "start a local Jev render+score service and set jev_base_url (see README → Local Jev), "
                 "or use the ModelBest API."
             )
+        if backend.jev_base_url:
+            jev = Backend(name="jev", base_url=backend.jev_base_url, api="chat")
+            if not reachable(jev):
+                raise BackendUnavailable(
+                    f"Jev service at {backend.jev_base_url} is not listening. Start the render+score "
+                    "service, or point jev_base_url at the right port."
+                )
         result = client.jev_score(data, text, category=category, threshold=threshold)
         return _ok(
             {
@@ -365,7 +372,9 @@ def _client() -> tuple[OcrClient, Backend]:
     for candidate in candidates(settings):
         if candidate.resolved_kind == "modelbest" and not candidate.api_key:
             continue
-        if candidate.source == "loopback" and not reachable(candidate):
+        # reachable() only opens a socket for loopback hosts; a configured local
+        # service that is down is skipped before any HTTP retry can stall the call.
+        if not reachable(candidate):
             continue
         return candidate.client(), candidate
     raise BackendUnavailable(

@@ -161,7 +161,7 @@ def candidates(settings: Mapping[str, Any], *, env_key: str = "") -> list[Backen
     return out
 
 
-def reachable(backend: Backend, *, timeout: float = 2.5) -> bool:
+def reachable(backend: Backend, *, timeout: float = 0.5) -> bool:
     host = urlsplit(backend.base_url).hostname or ""
     if host not in ("127.0.0.1", "localhost", "::1"):
         return True

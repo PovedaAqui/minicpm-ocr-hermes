@@ -29,7 +29,7 @@ documented limits and error taxonomy. 42 tests, ruff clean, `hermes plugins vali
 Local document services are first-class: `local_api=document` speaks the Docker/Web Demo job API, so local
 images and PDFs return the same per-region blocks and statuses as the hosted API. Local Jev render+score
 (`/v1/rm/score`) is wired, settings read through the keyed `ctx.get_config(key, default)` contract, and the
-llama.cpp + SDK stack is hardware-verified on an RTX 4070. 53 tests, ruff clean, validation 15/15.
+llama.cpp + SDK stack is hardware-verified on an RTX 4070. 130 tests, ruff clean, validation 15/15.
 
 ### 0.7.0 — extraction and command line · 8 Nov
 
