@@ -88,7 +88,7 @@ _OPENER = urllib.request.build_opener(_GuardedRedirects)
 
 def _fetch(url: str, *, timeout: float) -> tuple[bytes, str]:
     ensure_public(url)
-    req = urllib.request.Request(url, headers={"User-Agent": "hermes-minicpm-ocr/0.1"})
+    req = urllib.request.Request(url, headers={"User-Agent": "hermes-minicpm-ocr/0.6"})
     try:
         with _OPENER.open(req, timeout=timeout) as resp:
             length = resp.headers.get("Content-Length")

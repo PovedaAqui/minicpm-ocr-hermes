@@ -70,7 +70,9 @@ def test_ocr_read_on_local_backend_reports_no_blocks(tmp_path, monkeypatch):
 
     fake = Fake(CHAT)
     local = Backend(name="local-vllm", base_url="http://127.0.0.1:8000", kind="openai")
-    monkeypatch.setattr(tools, "_client", lambda: (OcrClient(transport=fake), local))
+    monkeypatch.setattr(
+        tools, "_client", lambda: (OcrClient(base_url="http://127.0.0.1:8000", transport=fake), local)
+    )
 
     result = json.loads(tools.ocr_read({"path": str(page), "queue": False}))
     assert result["ok"] is True
@@ -85,7 +87,11 @@ def test_ocr_read_refuses_pdf_on_local_backend(tmp_path, monkeypatch):
     pdf.write_bytes(b"%PDF-1.4\n1 0 obj <</Type /Page>> endobj\ntrailer")
 
     local = Backend(name="local-vllm", base_url="http://127.0.0.1:8000", kind="openai")
-    monkeypatch.setattr(tools, "_client", lambda: (OcrClient(transport=Fake(CHAT)), local))
+    monkeypatch.setattr(
+        tools,
+        "_client",
+        lambda: (OcrClient(base_url="http://127.0.0.1:8000", transport=Fake(CHAT)), local),
+    )
 
     result = json.loads(tools.ocr_read({"path": str(pdf), "queue": False}))
     assert result["ok"] is False
@@ -111,6 +117,7 @@ def test_jev_can_live_on_its_own_port():
     client = OcrClient(
         base_url="http://127.0.0.1:8080",
         jev_base_url="http://127.0.0.1:8081",
+        jev_api="chat",
         transport=transport,
     )
     client.jev_score(PNG, "Total due: 1,284.50")

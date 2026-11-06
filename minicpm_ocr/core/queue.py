@@ -122,12 +122,13 @@ class Queue:
         for page in pages:
             for block in page.blocks:
                 below = min_score is not None and block.score is not None and block.score < min_score
-                if block.ok and not below:
+                review = getattr(block, "review", not block.ok)
+                if not review and not below:
                     continue
                 ids.append(
                     self.add(
                         source=source,
-                        reason="block_status_failed" if not block.ok else "low_score",
+                        reason="block_status_failed" if review else "low_score",
                         content=block.content,
                         page=page.index,
                         label=block.label,

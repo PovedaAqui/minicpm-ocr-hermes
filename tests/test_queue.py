@@ -90,3 +90,19 @@ def test_tool_rejects_bad_action(tmp_path, monkeypatch):
     result = json.loads(tools.ocr_queue({"action": "nonsense"}))
     assert result["ok"] is False
     assert result["error"]["code"] == "request_rejected"
+
+
+def test_skipped_regions_are_not_review_items(tmp_path):
+    queue = Queue(tmp_path / "q.sqlite3")
+    page = Page(
+        index=0,
+        markdown="",
+        blocks=(
+            Block(0, "image", "", "skipped_no_vlm", (1, 2, 3, 4)),
+            Block(1, "seal", "", "skipped_seal", (5, 6, 7, 8)),
+            Block(2, "table", "", "failed", (9, 10, 11, 12)),
+        ),
+    )
+    ids = queue.add_failed_blocks(source="doc.pdf", pages=[page])
+    assert len(ids) == 1
+    assert queue.get(ids[0])["label"] == "table"

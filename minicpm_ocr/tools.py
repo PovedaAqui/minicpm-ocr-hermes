@@ -44,13 +44,14 @@ def ocr_read(args: dict, **kwargs: Any) -> str:
         client, backend = _client()
 
         job_id = None
-        if kind == "pdf":
-            if not backend.blocks:
+        if kind == "pdf" or backend.surface == "document":
+            if not backend.jobs:
                 raise RequestRejected(
-                    "this backend accepts images only: a local vLLM/Ollama server has no PDF job "
-                    "endpoint and no layout stage. Convert the PDF to page images, or use the hosted API."
+                    "this backend accepts images only: a bare vLLM/Ollama server has no document "
+                    "job endpoint and no layout stage. Set local_api=document and point base_url at "
+                    "the local document service (Docker or Web Demo), or use the hosted API."
                 )
-            job_id = client.submit_job(data, name=name)
+            job_id = client.submit_job(data, name=name, upright=bool(args.get("upright", True)))
             if not bool(args.get("wait", True)):
                 return _ok(
                     {
@@ -58,7 +59,7 @@ def ocr_read(args: dict, **kwargs: Any) -> str:
                         "status": "submitted",
                         "source": {"name": name, "kind": kind, "bytes": len(data)},
                         "backend": backend.name,
-                        "next": "Poll with ocr_job(job_id) — this PDF is still being parsed.",
+                        "next": "Poll with ocr_job(job_id) — this document is still being parsed.",
                     }
                 )
             status = client.wait(job_id, timeout=_job_timeout())
@@ -122,16 +123,23 @@ def ocr_verify(args: dict, **kwargs: Any) -> str:
         data, name = read_source(source)
         limits.check_image(data, name)
         client, backend = _client()
+        if backend.surface != "modelbest" and not backend.jev_base_url:
+            raise BackendUnavailable(
+                "ocr_verify needs a Jev service. The local parser backend does not score text: "
+                "start a local Jev render+score service and set jev_base_url (see README → Local Jev), "
+                "or use the ModelBest API."
+            )
         result = client.jev_score(data, text, category=category, threshold=threshold)
         return _ok(
             {
                 "score": round(result.score, 4),
+                "scored": result.scored,
                 "passed": result.passed,
                 "threshold": result.threshold,
                 "category": result.category,
                 "verdict": result.verdict,
                 "backend": backend.name,
-                "advice": _advice(result.passed, result.score, result.threshold),
+                "advice": _advice(result.passed, result.score, result.threshold, result.verdict),
             }
         )
     except OcrError as exc:
@@ -218,6 +226,7 @@ def _shape(
         "pages": len(pages),
         "regions": sum(len(p.blocks) for p in pages),
         "failed_regions": len(failed),
+        "skipped_regions": sum(len(p.skipped) for p in pages),
         "block_labels": labels,
         "page_indexes": [p.index for p in pages],
     }
@@ -268,6 +277,7 @@ def _job_payload(status: JobStatus, backend: Backend) -> dict[str, Any]:
         "pages_total": status.pages_total,
         "fraction": round(status.fraction, 3) if status.fraction is not None else None,
         "backend": backend.name,
+        "surface": backend.surface,
     }
     if status.pages:
         payload["pages"] = len(status.pages)
@@ -276,7 +286,12 @@ def _job_payload(status: JobStatus, backend: Backend) -> dict[str, Any]:
     return payload
 
 
-def _advice(passed: bool, score: float, threshold: float) -> str:
+def _advice(passed: bool, score: float, threshold: float, verdict: str = "scored") -> str:
+    if verdict and verdict != "scored":
+        return (
+            f"Jev did not produce a score (verdict {verdict!r}). Treat the text as unverified, "
+            "re-crop the region, and try again; do not quote it."
+        )
     if passed:
         return "Accepted: the text matches the region. Quote it if the surrounding context also checks out."
     return (
@@ -288,14 +303,44 @@ def _advice(passed: bool, score: float, threshold: float) -> str:
 # --------------------------------------------------------------------------- config
 
 
+_DEFAULTS: dict[str, Any] = {
+    "backend": "auto",
+    "local_api": "auto",
+    "base_url": "",
+    "parser_model": "MiniCPM-OCR-1.0",
+    "jev_model": "MiniCPM-OCR-Jev",
+    "jev_base_url": "",
+    "jev_api": "auto",
+    "threshold": 0.6,
+}
+
+
 def _settings() -> dict[str, Any]:
+    """Read plugin settings through the keyed Hermes route.
+
+    ``PluginContext.get_config(key, default)`` is the public contract; calling it
+    with no key raises and made earlier builds silently ignore every setting.
+    """
     if _CTX is None:
         return {}
-    try:
-        value = _CTX.get_config()
-    except Exception:  # noqa: BLE001
-        return {}
-    return dict(value) if isinstance(value, Mapping) else {}
+    out: dict[str, Any] = {}
+    for key, default in _DEFAULTS.items():
+        try:
+            value = _CTX.get_config(key, default)
+        except TypeError:
+            # A minimal stub (or an old build) may only expose the no-argument
+            # form; fall back to its mapping once, then keep the keyed contract.
+            try:
+                legacy = _CTX.get_config()
+            except Exception:  # noqa: BLE001
+                legacy = None
+            if isinstance(legacy, Mapping):
+                out.update({str(k): v for k, v in legacy.items()})
+            continue
+        except Exception:  # noqa: BLE001 — config must never fail a tool call
+            continue
+        out[key] = default if value is None else value
+    return out
 
 
 def _api_key(settings: Mapping[str, Any]) -> str:
@@ -308,8 +353,8 @@ def _api_key(settings: Mapping[str, Any]) -> str:
             return str(value).strip()
     except Exception:  # noqa: BLE001 — outside Hermes, or no secret route in this build
         pass
-    # Standalone/dev only: Hermes never returns a secret through get_config().
-    return str(settings.get("api_key") or "").strip()
+    # Standalone/dev only: the same variable get_secret reads inside Hermes.
+    return str(settings.get("api_key") or os.environ.get(_API_KEY_NAME) or "").strip()
 
 
 def _client() -> tuple[OcrClient, Backend]:
@@ -331,9 +376,9 @@ def _client() -> tuple[OcrClient, Backend]:
 
 def _job_timeout() -> float:
     try:
-        return float(os.environ.get("HERMES_MINICPM_OCR_JOB_TIMEOUT") or 120)
+        return float(os.environ.get("HERMES_MINICPM_OCR_JOB_TIMEOUT") or 180)
     except ValueError:
-        return 120.0
+        return 180.0
 
 
 # --------------------------------------------------------------------------- helpers

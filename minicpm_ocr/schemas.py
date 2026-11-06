@@ -15,7 +15,7 @@ OCR_READ = {
         "receipts, contracts, forms, scanned letters, tables — instead of asking a vision model to "
         "describe the file. Each region carries status ok/failed/skipped_no_vlm; anything not ok, "
         "or any region whose text matters, should be checked with ocr_verify before you quote it. "
-        "One image per call; PDFs go through ocr_job."
+        "Accepts one image or PDF; a PDF that outlives the wait returns a job_id for ocr_job."
     ),
     "parameters": {
         "type": "object",
@@ -51,9 +51,17 @@ OCR_READ = {
                 "type": "boolean",
                 "default": True,
                 "description": (
-                    "PDFs only: wait up to two minutes for the job. With false, returns a job_id "
-                    "immediately and you poll it with ocr_job. A job still running after the wait "
-                    "returns its handle either way."
+                    "PDFs and local document services only: wait up to three minutes for the job. "
+                    "With false, returns a job_id immediately and you poll it with ocr_job. A job "
+                    "still running after the wait returns its handle either way."
+                ),
+            },
+            "upright": {
+                "type": "boolean",
+                "default": True,
+                "description": (
+                    "Document backends only: let the service detect and correct page orientation "
+                    "before recognition. Turn it off for already-upright scans."
                 ),
             },
         },

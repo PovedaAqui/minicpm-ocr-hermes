@@ -16,7 +16,7 @@ class FakeClient:
         self.status = status
         self.waited = False
 
-    def submit_job(self, data: bytes, *, name: str) -> str:
+    def submit_job(self, data: bytes, *, name: str, upright: bool = True) -> str:
         return "job_1"
 
     def wait(self, job_id: str, *, timeout: float) -> JobStatus:

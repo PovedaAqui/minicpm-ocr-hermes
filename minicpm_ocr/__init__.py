@@ -1,7 +1,8 @@
 """MiniCPM-OCR for Hermes — registration.
 
-Five tools are planned; 0.1.0 ships the two that carry the idea: read a document
-and score whether a piece of text really matches a region.
+Four tools carry the loop: read a document, poll its job, score whether a
+region's text really matches the image, and keep what could not be read in a
+durable human review queue.
 """
 
 from __future__ import annotations

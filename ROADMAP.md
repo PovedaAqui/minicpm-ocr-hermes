@@ -24,7 +24,14 @@ underneath the agent.
 Four tools (`ocr_read`, `ocr_job`, `ocr_queue`, `ocr_verify`), dual backend, durable SQLite review queue,
 documented limits and error taxonomy. 42 tests, ruff clean, `hermes plugins validate` 15/15.
 
-### 0.6.0 — extraction and command line · 8 Nov
+### 0.6.0 — local document parity · done (6 Nov 2026)
+
+Local document services are first-class: `local_api=document` speaks the Docker/Web Demo job API, so local
+images and PDFs return the same per-region blocks and statuses as the hosted API. Local Jev render+score
+(`/v1/rm/score`) is wired, settings read through the keyed `ctx.get_config(key, default)` contract, and the
+llama.cpp + SDK stack is hardware-verified on an RTX 4070. 53 tests, ruff clean, validation 15/15.
+
+### 0.7.0 — extraction and command line · 8 Nov
 
 - `ocr_extract(source, fields)`: field-level key-information extraction with per-field confidence and ranked
   candidates, using the parser plus Jev as a scorer.
@@ -34,7 +41,7 @@ documented limits and error taxonomy. 42 tests, ruff clean, `hermes plugins vali
 **Exit:** extraction on ten documents with a per-field confidence table; `hermes ocr doctor` names the backend
 it found on a clean machine.
 
-### 0.7.0 — the loop · 10 Nov
+### 0.8.0 — the loop · 10 Nov
 
 - Crop-and-zoom re-read helper for a failed region (bbox in, tighter crop out, re-parse that crop).
 - `hermes ocr calibrate`: score a labelled folder and emit thresholds per document type instead of one global
@@ -43,7 +50,7 @@ it found on a clean machine.
 
 **Exit:** the 90-second demo runs end to end twice, with the same numbers both times.
 
-### 0.8.0 — submission build · 11 Nov
+### 0.9.0 — submission build · 11 Nov
 
 - Repo public, catalog entry (`subdir: minicpm_ocr`, full-SHA pin) and PR to `hermes-agent`.
 - 90-second demo video, README with measured numbers and the failure table.
@@ -51,7 +58,7 @@ it found on a clean machine.
 
 **Exit:** PR open, form submitted with both links, before 5PM EST.
 
-### 0.9.0 — Spark Open Build · 5 Dec
+### 0.10.0 — Spark Open Build · 5 Dec
 
 - MCP adapter over the same core, so the parse/verify pair is usable from Claude, Cursor or any MCP client —
   the integration the upstream repo does not ship.

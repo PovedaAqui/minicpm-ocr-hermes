@@ -44,6 +44,9 @@ PARSE_PATH = "/v1/document-parse"
 JOBS_PATH = "/v1/document-parse/jobs"
 CHAT_PATH = "/v1/chat/completions"
 MODELS_PATH = "/v1/models"
+DOCUMENT_JOBS_PATH = "/api/document-parse/jobs"
+HEALTH_PATH = "/health"
+RM_SCORE_PATH = "/v1/rm/score"
 
 RETRY_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 
@@ -69,6 +72,16 @@ class Block:
     def ok(self) -> bool:
         return self.status == "ok"
 
+    @property
+    def skipped(self) -> bool:
+        """A deliberate skip (image/figure without OCR, seal recognition off)."""
+        return self.status.strip().lower() in _SKIPPED
+
+    @property
+    def review(self) -> bool:
+        """Whether a person should look at this region."""
+        return not self.ok and not self.skipped
+
 
 @dataclass(frozen=True)
 class Page:
@@ -81,7 +94,11 @@ class Page:
 
     @property
     def failed(self) -> tuple[Block, ...]:
-        return tuple(b for b in self.blocks if not b.ok)
+        return tuple(b for b in self.blocks if b.review)
+
+    @property
+    def skipped(self) -> tuple[Block, ...]:
+        return tuple(b for b in self.blocks if b.skipped)
 
 
 @dataclass(frozen=True)
@@ -129,6 +146,7 @@ _TERMINAL = frozenset(
     {"success", "succeeded", "completed", "done", "failed", "error", "cancelled", "canceled"}
 )
 _OK = frozenset({"success", "succeeded", "completed", "done"})
+_SKIPPED = frozenset({"skipped_no_vlm", "skipped_seal"})
 
 
 @dataclass(frozen=True)
@@ -141,6 +159,7 @@ class JevResult:
     threshold: float
     detail: str = ""
     case_id: str = ""
+    scored: bool = True
 
 
 # --------------------------------------------------------------------------- transport
@@ -176,17 +195,25 @@ class OcrClient:
         model: str = DEFAULT_MODEL,
         jev_model: str = DEFAULT_JEV_MODEL,
         jev_base_url: str = "",
+        surface: str = "auto",
+        jev_api: str = "auto",
         timeout: float = 300.0,
         max_attempts: int = 3,
         backoff: float = 1.5,
         sleep: Callable[[float], None] = time.sleep,
         transport: Transport | None = None,
-        user_agent: str = "hermes-minicpm-ocr/0.1",
+        user_agent: str = "hermes-minicpm-ocr/0.6",
     ) -> None:
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
         # A single llama-server process serves a single model, so the parser and
         # the judge usually need two ports. Empty means "same base as the parser".
         self.jev_base_url = (jev_base_url or self.base_url).rstrip("/")
+        if surface == "auto":
+            host = urllib.parse.urlsplit(self.base_url).hostname or ""
+            surface = "modelbest" if host.endswith("modelbest.ai") else "chat"
+        self.surface = surface
+        self.jev_api = jev_api
+        self.jobs_path = DOCUMENT_JOBS_PATH if surface == "document" else JOBS_PATH
         self.api_key = api_key
         self.model = model
         self.jev_model = jev_model
@@ -215,6 +242,11 @@ class OcrClient:
                     ids.append(str(item["id"]))
         return ids
 
+    def health(self, *, timeout: float = 8.0) -> dict[str, Any]:
+        """Health document for a local document service (``{"status": "ok"}``)."""
+        _, _, raw = self._request("GET", HEALTH_PATH, expect=(200,), timeout=timeout)
+        return _json(raw)
+
     def parse_image(
         self,
         data: bytes,
@@ -224,6 +256,11 @@ class OcrClient:
         upright: bool = True,
         recognize_seal: bool = True,
     ) -> ParseResult:
+        if self.surface != "modelbest":
+            raise ParseFailed(
+                "this backend has no synchronous document-parse endpoint; "
+                "submit a job instead (the plugin does that automatically)"
+            )
         limits.check_image(data, name)
         payload = {
             "model": model or self.model,
@@ -234,9 +271,10 @@ class OcrClient:
         _, _, raw = self._request("POST", PARSE_PATH, payload=payload)
         body = _json(raw)
         page = _page_from(body)
+        ocr = body.get("ocr") or body.get("minicpm_ocr") or {}
         return ParseResult(
             pages=(page,),
-            request_id=body.get("request_id"),
+            request_id=body.get("request_id") or ocr.get("request_id"),
             result_status=body.get("result_status"),
             issues=tuple(body.get("issues") or ()),
             raw=body,
@@ -257,6 +295,8 @@ class OcrClient:
         and no per-region status, which is why the tool payload reports
         ``blocks_available: false`` for this backend.
         """
+        if self.surface != "chat":
+            raise ParseFailed("this endpoint is not an OpenAI-compatible chat server")
         limits.check_image(data, name)
         data_uri = f"data:{limits.mime_for(data)};base64,{base64.b64encode(data).decode('ascii')}"
         payload = {
@@ -294,14 +334,19 @@ class OcrClient:
         *,
         name: str,
         model: str | None = None,
+        upright: bool = True,
         timeout: float | None = None,
     ) -> str:
-        """Upload an image or PDF and return the job id (HTTP 202)."""
+        """Upload an image or PDF and return the job id (HTTP 200/201/202)."""
         kind = limits.check_document(data, name)
         boundary = f"----hermes{uuid.uuid4().hex}"
+        fields = {"model": model or self.model}
+        if self.surface == "document":
+            # The local service ignores `model` and takes the orientation switch.
+            fields = {"upright": "true" if upright else "false"}
         body = _multipart(
             boundary,
-            fields={"model": model or self.model},
+            fields=fields,
             file_field="file",
             filename=name,
             file_bytes=data,
@@ -309,7 +354,7 @@ class OcrClient:
         )
         headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
         _, _, raw = self._request(
-            "POST", JOBS_PATH, body=body, headers=headers, expect=(200, 201, 202), timeout=timeout
+            "POST", self.jobs_path, body=body, headers=headers, expect=(200, 201, 202), timeout=timeout
         )
         payload = _json(raw)
         job_id = _job_id(payload)
@@ -318,12 +363,12 @@ class OcrClient:
         return job_id
 
     def job(self, job_id: str, *, timeout: float | None = None) -> JobStatus:
-        _, _, raw = self._request("GET", f"{JOBS_PATH}/{job_id}", timeout=timeout)
+        _, _, raw = self._request("GET", f"{self.jobs_path}/{job_id}", timeout=timeout)
         return _job_status(_json(raw), job_id)
 
     def cancel_job(self, job_id: str, *, timeout: float | None = None) -> JobStatus:
         _, _, raw = self._request(
-            "DELETE", f"{JOBS_PATH}/{job_id}", expect=(200, 202, 204), timeout=timeout
+            "DELETE", f"{self.jobs_path}/{job_id}", expect=(200, 202, 204), timeout=timeout
         )
         payload = _json(raw) if raw else {}
         return _job_status(payload, job_id, default_status="cancelled")
@@ -359,6 +404,8 @@ class OcrClient:
         limits.check_image(image, "region")
         if category not in ("text", "formula", "table"):
             raise ParseFailed(f"category must be text, formula or table (got {category!r})")
+        if self._jev_mode() == "rm":
+            return self._jev_rm(image, text, category=category, threshold=threshold, timeout=timeout)
         data_uri = f"data:{limits.mime_for(image)};base64,{base64.b64encode(image).decode('ascii')}"
         payload = {
             "model": model or self.jev_model,
@@ -384,15 +431,69 @@ class OcrClient:
         first = results[0]
         score = float(first.get("prob_yes") or 0.0)
         used = float((body.get("summary") or {}).get("threshold_used", threshold))
+        verdict = str(first.get("verdict") or "")
         return JevResult(
             score=score,
             prob_no=float(first.get("prob_no") or 0.0),
-            verdict=str(first.get("verdict") or ""),
-            passed=score >= used,
+            verdict=verdict,
+            passed=verdict in ("", "scored") and score >= used,
             category=str(first.get("category") or category),
             threshold=used,
             detail=str(first.get("detail") or ""),
             case_id=str(first.get("case_id") or ""),
+            scored=verdict in ("", "scored"),
+        )
+
+    def _jev_mode(self) -> str:
+        """Pick the local reward-model API or the hosted/Jev Chat Completions shape."""
+        if self.jev_api in ("rm", "chat"):
+            return self.jev_api
+        host = urllib.parse.urlsplit(self.jev_base_url).hostname or ""
+        return "rm" if host in ("127.0.0.1", "localhost", "::1") else "chat"
+
+    def _jev_rm(
+        self,
+        image: bytes,
+        text: str,
+        *,
+        category: str,
+        threshold: float,
+        timeout: float | None,
+    ) -> JevResult:
+        """Score through a local Jev render+score service (Docker or SDK)."""
+        payload = {
+            "input_form": "ternary",
+            "threshold": threshold,
+            "items": [
+                {
+                    "case_id": "0",
+                    "image": base64.b64encode(image).decode("ascii"),
+                    "ocr_text": text,
+                    "category": category,
+                }
+            ],
+        }
+        _, _, raw = self._request(
+            "POST", RM_SCORE_PATH, payload=payload, timeout=timeout or 240.0, base=self.jev_base_url
+        )
+        body = _json(raw)
+        results = body.get("results") or []
+        if not results:
+            raise ParseFailed("Jev returned no results", detail=str(body)[:400])
+        first = results[0]
+        verdict = str(first.get("verdict") or "")
+        score = float(first.get("prob_yes") or 0.0)
+        used = float((body.get("summary") or {}).get("threshold_used", threshold))
+        return JevResult(
+            score=score,
+            prob_no=float(first.get("prob_no") or 0.0),
+            verdict=verdict,
+            passed=verdict == "scored" and score >= used,
+            category=str(first.get("category") or category),
+            threshold=used,
+            detail=str(first.get("detail") or ""),
+            case_id=str(first.get("case_id") or ""),
+            scored=verdict == "scored",
         )
 
     # -- internals ----------------------------------------------------------
@@ -469,7 +570,9 @@ def _page_from(payload: Mapping[str, Any]) -> Page:
     if choices:
         message = choices[0].get("message") or {}
         markdown = str(message.get("content") or "")
-    ocr = payload.get("ocr") or {}
+    # Hosted responses use `ocr`; the local document service (official Docker
+    # image and Web Demo backend) uses `minicpm_ocr`.
+    ocr = payload.get("ocr") or payload.get("minicpm_ocr") or {}
     blocks: list[Block] = []
     for item in ocr.get("blocks") or []:
         if not isinstance(item, dict):
@@ -481,6 +584,7 @@ def _page_from(payload: Mapping[str, Any]) -> Page:
                 box = (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))
             except (TypeError, ValueError):
                 box = None
+        score = item.get("score")
         blocks.append(
             Block(
                 order=int(item.get("order") or 0),
@@ -488,6 +592,7 @@ def _page_from(payload: Mapping[str, Any]) -> Page:
                 content=str(item.get("content") or ""),
                 status=str(item.get("status") or "ok"),
                 bbox=box,
+                score=float(score) if isinstance(score, (int, float)) else None,
             )
         )
     metadata = payload.get("metadata") or {}
@@ -510,13 +615,16 @@ def _job_status(payload: Mapping[str, Any], job_id: str, *, default_status: str 
         pages = [_page_from(item) for item in raw_pages if isinstance(item, dict)]
     done = payload.get("pages_done")
     total = payload.get("pages_total")
+    markdown = str(payload.get("markdown") or "")
+    if not markdown and pages:
+        markdown = "\n\n".join(page.markdown for page in pages)
     return JobStatus(
         id=str(payload.get("id") or job_id),
         status=str(payload.get("status") or default_status),
         pages_done=int(done) if isinstance(done, (int, float)) else 0,
         pages_total=int(total) if isinstance(total, (int, float)) else 0,
         pages=tuple(pages),
-        markdown=str(payload.get("markdown") or ""),
+        markdown=markdown,
         raw=payload,
     )
 

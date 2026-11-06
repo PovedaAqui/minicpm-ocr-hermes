@@ -1,5 +1,5 @@
 name: minicpm-ocr
-version: 0.5.0
+version: 0.6.0
 manifest_version: 2
 api_version: 1
 description: >-
@@ -21,19 +21,23 @@ config_schema:
     type: str
     default: auto
     description: "auto | cloud | local. Which family of backends to consider."
+  local_api:
+    type: str
+    default: auto
+    description: "auto | document | chat. Local document = full pipeline with blocks and PDFs (Docker or SDK Web Demo); chat = a bare vLLM/llama.cpp/Ollama server, images only."
   base_url:
     type: str
     default: ""
-    description: "MiniCPM-OCR service root, without /v1 (e.g. http://127.0.0.1:8000). Empty = auto-discover."
+    description: "Service root without /v1, e.g. http://127.0.0.1:18499 (chat), http://127.0.0.1:8966 (document service), or https://api.modelbest.ai. Empty = auto-discover."
   api_key:
     type: secret
     env: MODELBEST_API_KEY
     default: ""
     description: "ModelBest API key. Stored through Hermes' credential route, never in config.yaml."
-  model:
+  parser_model:
     type: str
     default: "MiniCPM-OCR-1.0"
-    description: "Parser model id as the backend names it (e.g. minicpm-ocr:latest on Ollama)."
+    description: "Parser model id as the backend names it (e.g. minicpm-ocr on llama.cpp/Ollama)."
   jev_model:
     type: str
     default: "MiniCPM-OCR-Jev"
@@ -41,7 +45,11 @@ config_schema:
   jev_base_url:
     type: str
     default: ""
-    description: "Separate service root for Jev, without /v1. llama-server and Ollama serve one model per process, so parser and judge usually live on different ports."
+    description: "Separate service root for Jev, without /v1. Empty = same as base_url."
+  jev_api:
+    type: str
+    default: auto
+    description: "auto | rm | chat. rm = local Jev render+score service (/v1/rm/score); chat = hosted Jev Chat Completions. auto = rm for a loopback URL, chat otherwise."
   threshold:
     type: float
     default: 0.6
