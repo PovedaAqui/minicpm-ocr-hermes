@@ -8,6 +8,21 @@ it came from, and anything doubtful is re-read before it reaches the user.
 
 Not affiliated with OpenBMB. MIT.
 
+## Contents
+
+- [Why this exists](#why-this-exists)
+- [Status](#status)
+- [Install](#install)
+- [Configure](#configure)
+- [Tools](#tools)
+- [Backends](#backends)
+- [Measured, not claimed](#measured-not-claimed)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Disclosure](#disclosure)
+- [Roadmap](#roadmap)
+- [Licence](#licence)
+
 ## Why this exists
 
 An OCR call returns text. That is enough when the page is clean and the stakes are low, and it is not
@@ -48,7 +63,7 @@ hermes plugins enable minicpm-ocr
 The plugin lives in `minicpm_ocr/`; `plugin.yaml` sits there, which is why the catalog entry uses
 `subdir: minicpm_ocr`.
 
-Requires Hermes `>=0.22.0` and Python `>=3.10`. No third-party Python dependencies.
+Requires Hermes `>=0.22.0` and Python `>=3.10`. No third-party runtime dependencies.
 
 ## Configure
 
@@ -160,10 +175,16 @@ The image's `vllm` shim fixes the context at 40960 and 36 images per prompt. Tha
   --uvicorn-log-level warning
 ```
 
-Then start the bundled backend with `OCR_LAYOUT_DEVICE=cpu`, `OCR_UPRIGHT_DEVICE=cpu`,
-`PORT=8000 /opt/venv/bin/python -s server.py`. The plugin's default `upright: true` runs the CPU
-orientation/deskew stage; on a 12 GB host that is much slower than `upright: false` on an already-upright
-scan (see measurements).
+Then start the bundled backend in the same container. Its `OCR_SERVER_URL` defaults to the image's
+`VLLM_URL`; keep layout and upright on the CPU on a 12 GB card:
+
+```bash
+OCR_LAYOUT_DEVICE=cpu OCR_UPRIGHT_DEVICE=cpu \
+PORT=8000 /opt/venv/bin/python -s server.py
+```
+
+The plugin's default `upright: true` runs the CPU orientation/deskew stage; on a 12 GB host that is much
+slower than `upright: false` on an already-upright scan (see measurements).
 
 Without Docker, run the SDK Web Demo backend against any recognition server. This is the combination
 verified on an RTX 4070 (12 GB) with llama.cpp:
@@ -217,13 +238,11 @@ Ollama uses the same contract; register the GGUF model exactly as its deployment
 ### Local Jev
 
 `ocr_verify` needs Jev's **render+score** service, not the raw scoring engine: it renders the candidate text
-before scoring. The Docker image and the SDK script expose the same fields; start the service and point the
-plugin at its port:
-
-Jev needs its own llama.cpp build (`7eed6b768` or newer) and the GGUF pair from
-`openbmb/MiniCPM-OCR-Jev-gguf`; start the engine on `:18501`, then the render+score service on
-`:18500` with the renderer environment (Playwright Chromium + Pillow 12.3.0). A CJK font is required
-for Chinese regions; without one Chromium draws boxes and the score is meaningless.
+before scoring. The Docker image and the SDK script expose the same fields. Prerequisites: Jev's own
+llama.cpp build (`7eed6b768` or newer), the GGUF pair from `openbmb/MiniCPM-OCR-Jev-gguf`, and a renderer
+environment with Playwright Chromium and Pillow 12.3.0. A CJK font is required for Chinese regions; without
+one Chromium draws boxes and the score is meaningless. Start the engine on `:18501`, then the renderer on
+`:18500`:
 
 ```bash
 # engine (one model per process; this one is not a chat model)
@@ -245,11 +264,11 @@ Without a local Jev service, `ocr_verify` returns `backend_unavailable`; it does
 
 ## Measured, not claimed
 
-Run on 2026-11-06, one RTX 4070 12 GB, one i7-class CPU, Python 3.12:
+Run on 2026-11-06: one RTX 4070 12 GB, one Ryzen 7 7800X3D (8C/16T), Python 3.12:
 
 | Path | What | Result |
 |---|---|---|
-| ModelBest API | 653 KB invoice PNG, 15 regions | **6–25 s** (warm–cold), 0 failed, 1 skipped |
+| ModelBest API | 653 KB invoice PNG, 15 regions | **25 s cold, 6–10 s warm**, 0 failed, 1 skipped |
 | ModelBest API | 1-page PDF, 4 regions | **9–13 s** |
 | ModelBest Jev | Jev example crop, correct transcription | **0.9952**, **1.9 s** |
 | local Jev (Q4_K_M + render service) | same crop, correct transcription | **0.9948**, **1.0 s** (reference **0.99501**) |
@@ -278,9 +297,10 @@ Vendor figures (benchmarks, throughput) belong to the model cards and are intent
 ## Development
 
 ```bash
-python -m pytest      # 136 tests, no network, 98% line coverage
+python -m pytest                            # 136 tests, no network
+coverage run -m pytest && coverage report -m # 98% line coverage
 ruff check .
-hermes plugins validate minicpm_ocr   # the same check catalog admission runs
+hermes plugins validate minicpm_ocr --install-deps  # catalog admission check
 ```
 
 The test suite injects a fake transport, so nothing here needs a key or a network.
@@ -289,6 +309,69 @@ The test suite injects a fake transport, so nothing here needs a key or a networ
 schema, loadability, the isolated capability probe, declared-vs-registered tools/hooks/middleware, built-in
 name collisions, the security scan and the no-core-override check. CI runs it on every push, alongside
 pytest and ruff.
+
+## Contributing
+
+Bug reports, backend reports and pull requests are welcome. The plugin has no third-party runtime
+dependencies; keep it that way unless a dependency is unavoidable and discussed first.
+
+### Set up
+
+```bash
+git clone https://github.com/PovedaAqui/minicpm-ocr-hermes
+cd minicpm-ocr-hermes
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -U pip pytest ruff coverage
+```
+
+### Code map
+
+| Path | Responsibility |
+|---|---|
+| `minicpm_ocr/plugin.yaml` | Manifest, settings schema and the declared tool list |
+| `minicpm_ocr/tools.py` | Tool handlers, config resolution, payload shaping, error-to-JSON mapping |
+| `minicpm_ocr/schemas.py` | Model-facing tool schemas; descriptions are part of the behavior |
+| `minicpm_ocr/core/client.py` | HTTP transport, job status, page/block parsing, Jev scoring |
+| `minicpm_ocr/core/probe.py` | Backend candidates, surface inference, health/model probes |
+| `minicpm_ocr/core/queue.py` | SQLite review queue, decisions, CSV export |
+| `minicpm_ocr/core/sources.py` | Local-file and guarded public-URL loading |
+| `minicpm_ocr/core/limits.py` | Image/PDF preflight limits |
+| `minicpm_ocr/core/errors.py` | Error taxonomy and HTTP-to-error mapping |
+| `tests/` | Unit tests with fake transports; no key, GPU, Docker or network |
+
+### Change rules
+
+- Tool handlers never raise: return `_ok(...)` or `_err(exc.to_dict())`. Add an `OcrError` subclass
+  when a new failure mode needs its own `code`, then map it in `errors.from_status`.
+- Read settings through `ctx.get_config(key, default)`. The bare `get_config()` form is not the
+  Hermes contract; `model` is also a reserved settings root, which is why the parser setting is
+  `parser_model`.
+- Backends declare a `Backend.surface`: `modelbest` (sync image + jobs + hosted Jev), `document`
+  (local `/api/document-parse/jobs` + blocks), or `chat` (OpenAI Chat Completions, page text only).
+  Keep `blocks`, `jobs`, paths and `jev_api` consistent when adding one.
+- Tests must stay offline and dependency-free. Use the existing `Fake` transport and cover the
+  model-visible result: `ok`, `error.code`, `blocks_available`, `scored`, `passed`, queue state.
+- Review-queue state is durable by design. Do not move it into the conversation or a temporary file.
+- If a change alters a measured claim, update the table and the method; do not tune prose around a number.
+
+### Gates and release
+
+Run the commands in [Development](#development); `hermes plugins validate minicpm_ocr --install-deps`
+runs the same admission check the catalog uses. Before a release:
+
+1. Bump `version` in `minicpm_ocr/plugin.yaml` and `pyproject.toml` together.
+2. Re-run pytest, ruff, the coverage command and plugin validation.
+3. Commit and push; wait for both CI jobs to pass.
+4. Open a SHA-bump PR against `plugin-catalog/minicpm-ocr.yaml` in `NousResearch/hermes-agent`
+   with the new full 40-character commit and the matching quoted `version`. Installed copies do not
+   self-update; the catalog pin is the release.
+
+### Reporting
+
+Include the Hermes version, backend (`modelbest` / `document` / `chat`), the tool call, and the JSON
+error payload. Do not paste API keys or private documents into an issue; for a security-sensitive
+report, contact the maintainer through the repository instead of filing a public proof of concept.
 
 ## Disclosure
 
