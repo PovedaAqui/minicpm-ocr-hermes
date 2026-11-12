@@ -323,6 +323,7 @@ _DEFAULTS: dict[str, Any] = {
     "jev_base_url": "",
     "jev_api": "auto",
     "threshold": 0.6,
+    "job_timeout": 180.0,
 }
 
 
@@ -355,17 +356,24 @@ def _settings() -> dict[str, Any]:
 
 
 def _api_key(settings: Mapping[str, Any]) -> str:
-    """Read the key the way Hermes expects: secret route first, never .env by hand."""
+    """Read the key the way Hermes expects: the secret route only, never the environment.
+
+    ``agent.secret_scope`` exists only inside Hermes. There, ``get_secret`` is the
+    single source: an empty answer or an error means *this* profile has no key, and a
+    fallback to ``os.environ`` would hand it the launch profile's key — exactly what
+    ``get_secret`` exists to prevent. The environment is read only when the import
+    fails, i.e. standalone runs, tests and dev.
+    """
     try:
         from agent.secret_scope import get_secret
-
+    except ImportError:
+        # Outside Hermes: no secret route, so the variable is the only key there is.
+        return str(settings.get("api_key") or os.environ.get(_API_KEY_NAME) or "").strip()
+    try:
         value = get_secret(_API_KEY_NAME)
-        if value:
-            return str(value).strip()
-    except Exception:  # noqa: BLE001 — outside Hermes, or no secret route in this build
-        pass
-    # Standalone/dev only: the same variable get_secret reads inside Hermes.
-    return str(settings.get("api_key") or os.environ.get(_API_KEY_NAME) or "").strip()
+    except Exception:  # noqa: BLE001 — no key is correct; another profile's key is not
+        return ""
+    return str(value or "").strip()
 
 
 def _client() -> tuple[OcrClient, Backend]:
@@ -388,10 +396,18 @@ def _client() -> tuple[OcrClient, Backend]:
 
 
 def _job_timeout() -> float:
+    """Seconds a document job is polled before ``ocr_read`` returns its id instead."""
+    default = float(_DEFAULTS["job_timeout"])
+    if _CTX is None:
+        # Standalone/dev: no settings route, so the documented variable still applies.
+        raw: Any = os.environ.get("HERMES_MINICPM_OCR_JOB_TIMEOUT")
+    else:
+        raw = _settings().get("job_timeout")
     try:
-        return float(os.environ.get("HERMES_MINICPM_OCR_JOB_TIMEOUT") or 180)
-    except ValueError:
-        return 180.0
+        value = default if raw in (None, "") else float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 # --------------------------------------------------------------------------- helpers

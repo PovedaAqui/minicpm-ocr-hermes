@@ -54,3 +54,7 @@ config_schema:
     type: float
     default: 0.6
     description: "Jev score at or above which a region is accepted without review (0-1)."
+  job_timeout:
+    type: float
+    default: 180
+    description: "Seconds ocr_read polls a document job before returning its id for ocr_job (default 180)."

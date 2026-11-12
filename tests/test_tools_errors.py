@@ -130,6 +130,29 @@ def test_job_timeout_env(monkeypatch):
     assert tools._job_timeout() == 180.0
 
 
+def test_job_timeout_setting_beats_env(monkeypatch):
+    class Ctx:
+        def get_config(self, key, default=None):
+            return 12.5 if key == "job_timeout" else default
+
+    tools.set_context(Ctx())
+    monkeypatch.setenv("HERMES_MINICPM_OCR_JOB_TIMEOUT", "7.5")
+    assert tools._job_timeout() == 12.5
+
+
+def test_job_timeout_setting_edge_values():
+    class Ctx:
+        def __init__(self, value):
+            self.value = value
+
+        def get_config(self, key, default=None):
+            return self.value if key == "job_timeout" else default
+
+    for bad in (0, -1, "bad"):
+        tools.set_context(Ctx(bad))
+        assert tools._job_timeout() == 180.0
+
+
 def test_helpers_validate_and_clip():
     with pytest.raises(RequestRejected):
         tools._opt_int("x")
@@ -176,6 +199,26 @@ def test_env_key_is_standalone_fallback(monkeypatch):
     monkeypatch.setitem(sys.modules, "agent.secret_scope", None)
     monkeypatch.setenv("MODELBEST_API_KEY", "env-key")
     assert tools._api_key({}) == "env-key"
+
+
+def test_empty_secret_does_not_fall_back_to_env(monkeypatch):
+    fake = types.ModuleType("agent.secret_scope")
+    fake.get_secret = lambda name: None
+    monkeypatch.setitem(sys.modules, "agent.secret_scope", fake)
+    monkeypatch.setenv("MODELBEST_API_KEY", "launch-profile-key")
+    assert tools._api_key({}) == ""
+
+
+def test_secret_error_does_not_fall_back_to_env(monkeypatch):
+    fake = types.ModuleType("agent.secret_scope")
+
+    def no_route(name):
+        raise RuntimeError("this profile has no secret route")
+
+    fake.get_secret = no_route
+    monkeypatch.setitem(sys.modules, "agent.secret_scope", fake)
+    monkeypatch.setenv("MODELBEST_API_KEY", "launch-profile-key")
+    assert tools._api_key({}) == ""
 
 
 def test_client_refuses_when_no_candidate_is_usable(monkeypatch):

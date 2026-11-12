@@ -78,6 +78,7 @@ Requires Hermes `>=0.22.0` and Python `>=3.10`. No third-party runtime dependenc
 | `jev_base_url` | Separate service root for Jev, without `/v1`. Empty = same as `base_url`. |
 | `jev_api` | `auto` \| `rm` \| `chat`. `rm` = local Jev render+score service (`/v1/rm/score`); `chat` = hosted Jev Chat Completions. `auto` picks `rm` for a loopback URL, `chat` otherwise. |
 | `threshold` | Jev score at or above which a region is accepted (default `0.6`). |
+| `job_timeout` | Seconds `ocr_read` polls a document job before returning its `job_id` for `ocr_job` (default `180`). |
 
 Backends are tried in order: explicit `base_url`, the hosted key, then the default local ports. A
 loopback candidate that is not listening is skipped in about 0.5 s, so a dead local service returns
@@ -108,10 +109,10 @@ hermes config set plugins.entries.minicpm-ocr.settings.threshold 0.6
 ### `ocr_read(path, mode="summary"|"markdown"|"blocks", max_chars=20000, wait=True, upright=True)`
 
 Parses one image or PDF. Hosted images use the synchronous endpoint; PDFs and everything on a local
-**document** service run as a job, polled for up to three minutes. Returns page count, region count, block
-labels, failed regions with their bboxes, and a Markdown preview. Context-safe by default: large output is
-truncated with a flag rather than flooding the turn. A job that outlives the wait returns its `job_id` and
-status instead of failing — poll it with `ocr_job`.
+**document** service run as a job, polled for `job_timeout` seconds (default 180). Returns page count,
+region count, block labels, failed regions with their bboxes, and a Markdown preview. Context-safe by
+default: large output is truncated with a flag rather than flooding the turn. A job that outlives the
+wait returns its `job_id` and status instead of failing — poll it with `ocr_job`.
 
 A bare **chat** backend has no layout stage, so it returns page text only (`blocks_available: false`) and
 rejects PDFs with a message that names the fix.
